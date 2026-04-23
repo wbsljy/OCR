@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    <!-- 全局顶部导航，统计页始终可见，OCR 页面仍要求登录。 -->
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">{{ app_name }}</div>
+            <nav class="nav-links">
+                <a href="{{ url_for('ocr_page') }}">OCR 解析</a>
+                <a href="{{ url_for('stats_page') }}">统计概览</a>
+                <a href="{{ url_for('dashboard_page') }}">数据看板</a>
+                {% if request.session.get('authenticated') %}
+                <a href="{{ url_for('logout') }}">退出登录</a>
+                {% endif %}
+            </nav>
+        </div>
+    </header>
+
+    <main class="page-shell">
+        <!-- 一次性消息提示，例如登录失败等反馈。 -->
+        {% if messages %}
+            <div class="flash-stack">
+                {% for item in messages %}
+                <div class="flash-message {{ item.category }}">{{ item.message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

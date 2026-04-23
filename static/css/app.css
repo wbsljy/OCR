@@ -1,0 +1,689 @@
+/* 全局页面样式，覆盖登录页、OCR 页和统计页的基础布局。 */
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+    background: #f5f7fb;
+    color: #1f2937;
+}
+
+a {
+    color: #2563eb;
+    text-decoration: none;
+}
+
+button {
+    cursor: pointer;
+}
+
+.topbar {
+    background: #111827;
+    color: #fff;
+    padding: 14px 0;
+}
+
+.topbar-inner,
+.page-shell {
+    width: min(1280px, calc(100% - 32px));
+    margin: 0 auto;
+}
+
+/* OCR 解析页：加宽容器，利用宽屏两侧留白，减轻表格横向滚动 */
+body.page--ocr-workspace .topbar-inner,
+body.page--ocr-workspace .page-shell {
+    width: min(1720px, calc(100% - 32px));
+}
+
+
+.topbar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.brand {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.nav-links {
+    display: flex;
+    gap: 16px;
+}
+
+.nav-links a {
+    color: #dbeafe;
+}
+
+.page-shell {
+    padding: 24px 0 40px;
+}
+
+.page-header h1,
+.login-card h1 {
+    margin: 0 0 8px;
+}
+
+.page-tip,
+.empty-tip {
+    color: #6b7280;
+}
+
+.flash-stack {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.flash-message {
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #eff6ff;
+}
+
+.flash-message.error {
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+.login-card,
+.upload-panel,
+.panel,
+.stat-card {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.login-card {
+    width: min(420px, 100%);
+    margin: 80px auto 0;
+    padding: 28px;
+}
+
+.login-form,
+.upload-form {
+    display: grid;
+    gap: 12px;
+}
+
+.login-form input,
+.upload-form input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    font-size: 14px;
+}
+
+.login-form button,
+.upload-form button {
+    border: 0;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 600;
+}
+
+.upload-panel {
+    padding: 18px 20px;
+    margin-bottom: 20px;
+}
+
+.upload-form {
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+}
+
+.field-label {
+    display: none;
+}
+
+.status-text {
+    font-size: 14px;
+    color: #2563eb;
+}
+
+.workspace-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.page-nav-unified {
+    align-self: center;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.page-nav-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+}
+
+.page-info-sub {
+    font-size: 13px;
+    color: #64748b;
+}
+
+.btn-page-sub {
+    padding: 6px 12px;
+    font-size: 13px;
+    border-color: #94a3b8;
+    color: #475569;
+}
+
+.workspace-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+/* 避免子内容（如宽 canvas）把 grid 列越撑越大，引发 ResizeObserver + PDF 重绘死循环 */
+.workspace-grid > .panel {
+    min-width: 0;
+}
+
+.panel {
+    padding: 20px;
+}
+
+.panel-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 14px;
+}
+
+.page-nav {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 8px 0;
+}
+
+.page-info {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.btn-page {
+    padding: 8px 16px;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    background: #fff;
+    color: #2563eb;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.btn-page:hover {
+    background: #eff6ff;
+}
+
+.btn-page:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.preview-container {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-height: 520px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 12px;
+    padding: 14px;
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+.preview-container img,
+.preview-container iframe,
+.preview-container embed {
+    max-width: 100%;
+    width: 100%;
+    min-height: 480px;
+    border: 0;
+}
+
+/* PDF.js canvas：仅用内联宽高，避免 max-width 再次缩小位图导致发糊 */
+.preview-container canvas {
+    width: auto;
+    height: auto;
+    min-height: 0;
+    border: 0;
+    display: block;
+}
+
+.verify-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    background: #f8fafc;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+}
+
+.verify-status {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.btn-verify {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    background: #16a34a;
+    color: #fff;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.btn-verify:hover:not(:disabled) {
+    background: #15803d;
+}
+
+.btn-verify:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+}
+
+/* OCR 右侧：摘要区 + 内嵌表格编辑区（不再使用整页 Markdown 预览） */
+.ocr-result-panel {
+    min-height: 520px;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px;
+    background: #fff;
+    overflow-x: auto;
+    line-height: 1.7;
+    font-size: 16px;
+}
+
+.ocr-result-meta {
+    margin-bottom: 6px;
+    overflow-wrap: anywhere;
+    font-size: 15px;
+    color: #334155;
+}
+
+/* 摘要区与表区间小标题共用（含第二个 # 品質明細表，避免仅写在 .ocr-result-meta 下表格内不生效） */
+.ocr-result-panel .ocr-meta-title {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 22px;
+    margin: 0 0 4px;
+    font-weight: 600;
+    line-height: 1.3;
+    text-align: center;
+}
+
+.ocr-result-tables-wrap {
+    overflow-x: auto;
+}
+
+.ocr-result-tables .ocr-inter-html {
+    margin: 0 0 4px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #334155;
+}
+
+.ocr-result-tables table {
+    margin: 0 0 0px;
+    width: max-content;
+    max-width: 100%;
+    border-collapse: collapse;
+    font-size: 9px; /* 表格字体大小设置 */
+    line-height: 1.2;
+}
+
+.ocr-result-tables table:first-of-type {
+    width: 100%;
+    max-width: none;
+}
+
+.ocr-result-tables th,
+.ocr-result-tables td {
+    padding: 6px 10px;
+    border: 1px solid #e5e7eb;
+    text-align: left;
+    white-space: nowrap;
+    line-height: 1.4;
+    vertical-align: middle;
+}
+
+.ocr-result-tables td.md-cell-editable {
+    cursor: text;
+    outline-offset: 1px;
+    min-height: 1.4em;
+}
+
+.ocr-result-tables td.md-cell-editable:focus {
+    outline: 2px solid #2563eb;
+    background: #f8fafc;
+}
+
+.ocr-result-tables .summary-field-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.ocr-result-tables .summary-field-value {
+    font-weight: 600;
+}
+
+.ocr-result-tables .summary-field-value-editable {
+    min-width: 74px;
+    padding: 0 2px;
+    border-bottom: 1px dashed #93c5fd;
+    outline: none;
+}
+
+.ocr-result-tables .summary-field-value-editable:focus {
+    background: #eff6ff;
+    border-bottom-color: #2563eb;
+}
+
+.ocr-result-tables .summary-toggle-btn {
+    margin-left: 6px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 12px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: middle;
+}
+
+.ocr-result-tables .summary-toggle-btn:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.ocr-result-tables td.md-cell-invalid,
+.ocr-result-tables th.md-cell-invalid {
+    background: #fee2e2 !important;
+    outline: 2px solid #dc2626;
+    outline-offset: 0;
+}
+
+/* 金加 CNC0：第二段「品質明細表」锁定（仅提交第一段） */
+.cnc0-second-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px 14px;
+    margin: 0 0 6px;
+    width: 100%;
+}
+
+.cnc0-second-title-row .ocr-meta-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-bottom: 0;
+    text-align: center;
+}
+
+.btn-cnc0-second-lock {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    font-size: 13px;
+    line-height: 1.35;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #334155;
+}
+
+.btn-cnc0-second-lock:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.btn-cnc0-second-lock[aria-pressed="true"] {
+    background: #dbeafe;
+    border-color: #60a5fa;
+    color: #1e40af;
+}
+
+.cnc0-second-block.is-locked {
+    opacity: 0.72;
+    background: #f3f4f6;
+    border-radius: 8px;
+    padding: 4px 0 8px;
+    pointer-events: none;
+}
+
+.cnc0-second-block.is-locked .cnc0-second-title-row {
+    pointer-events: auto;
+}
+
+.recent-section,
+.stats-grid {
+    margin-top: 20px;
+}
+
+.stats-dual-panels {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px;
+}
+
+.stats-filter-form {
+    margin-top: 12px;
+}
+
+.stats-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: end;
+    margin-bottom: 16px;
+}
+
+.stats-filter-row label {
+    font-size: 14px;
+    color: #475569;
+}
+
+.stats-filter-form input[type="date"],
+.stats-filter-form select {
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    margin-left: 6px;
+}
+
+.stats-dual-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+
+.stats-filter-col label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    color: #475569;
+}
+
+.stats-filter-heading {
+    margin: 0 0 10px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.stats-filter-form button[type="submit"] {
+    padding: 10px 18px;
+    border: none;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 600;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px;
+}
+
+.stat-card {
+    padding: 20px;
+}
+
+.stat-label {
+    display: block;
+    color: #6b7280;
+    margin-bottom: 8px;
+}
+
+.stat-card strong {
+    font-size: 28px;
+}
+
+.recent-table-wrapper {
+    overflow-x: auto;
+}
+
+.recent-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.recent-table th,
+.recent-table td {
+    text-align: left;
+    padding: 12px 10px;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 14px;
+}
+
+.task-row-clickable {
+    cursor: pointer;
+}
+
+.task-row-clickable:hover {
+    background: #f1f5f9;
+}
+
+.dashboard-filter-panel {
+    margin-top: 20px;
+}
+
+.dashboard-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: end;
+}
+
+.dashboard-filters label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 160px;
+    color: #475569;
+    font-size: 14px;
+}
+
+.dashboard-filters select,
+.dashboard-filters input[type="date"] {
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.dashboard-filters button {
+    height: 42px;
+}
+
+.dashboard-filters button.btn-secondary {
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    border-radius: 10px;
+    padding: 0 18px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.dashboard-filters button.btn-secondary:hover {
+    background: #e2e8f0;
+}
+
+.dashboard-stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.dashboard-charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 18px;
+}
+
+.chart-panel {
+    min-height: 340px;
+}
+
+.chart-canvas-wrap {
+    position: relative;
+    height: 280px;
+}
+
+@media (min-width: 961px) {
+    /* 略多分给右侧表格列（相对均分） */
+    body.page--ocr-workspace .workspace-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.22fr);
+    }
+}
+
+@media (max-width: 960px) {
+    .stats-dual-panels,
+    .stats-dual-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .workspace-grid,
+    .stats-grid,
+    .upload-form {
+        grid-template-columns: 1fr;
+    }
+
+    .preview-container {
+        min-height: 360px;
+    }
+}

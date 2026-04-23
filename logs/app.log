@@ -1,0 +1,298 @@
+2026-03-06 14:17:04,469 INFO [werkzeug] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:18000
+2026-03-06 14:17:04,469 INFO [werkzeug] [33mPress CTRL+C to quit[0m
+2026-03-06 14:17:12,185 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:12] "[32mGET / HTTP/1.1[0m" 302 -
+2026-03-06 14:17:12,191 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:12] "GET /login HTTP/1.1" 200 -
+2026-03-06 14:17:25,205 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:25] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-03-06 14:17:25,220 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:25] "GET /ocr HTTP/1.1" 200 -
+2026-03-06 14:17:35,258 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:35] "[32mGET / HTTP/1.1[0m" 302 -
+2026-03-06 14:17:35,326 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:35] "[32mGET /ocr HTTP/1.1[0m" 302 -
+2026-03-06 14:17:35,338 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:35] "GET /login HTTP/1.1" 200 -
+2026-03-06 14:17:35,429 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:35] "GET /static/css/app.css HTTP/1.1" 200 -
+2026-03-06 14:17:35,495 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:17:35] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-06 14:18:19,348 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:18:19] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-03-06 14:18:19,354 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:18:19] "GET /ocr HTTP/1.1" 200 -
+2026-03-06 14:18:40,429 ERROR [routes.ocr] OCR 解析失败: task_id=1
+Traceback (most recent call last):
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\util\connection.py", line 85, in create_connection
+    raise err
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\util\connection.py", line 73, in create_connection
+    sock.connect(sa)
+TimeoutError: [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+               ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\connection.py", line 500, in request
+    self.endheaders()
+  File "C:\ProgramData\anaconda3\Lib\http\client.py", line 1331, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+  File "C:\ProgramData\anaconda3\Lib\http\client.py", line 1091, in _send_output
+    self.send(msg)
+  File "C:\ProgramData\anaconda3\Lib\http\client.py", line 1035, in send
+    self.connect()
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\connection.py", line 331, in connect
+    self.sock = self._new_conn()
+                ^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\connection.py", line 213, in _new_conn
+    raise ConnectTimeoutError(
+urllib3.exceptions.ConnectTimeoutError: (<HTTPConnection(host='10.134.120.189', port=18000) at 0x219f3f37140>, 'Connection to 10.134.120.189 timed out. (connect timeout=120)')
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\requests\adapters.py", line 667, in send
+    resp = conn.urlopen(
+           ^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+              ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\urllib3\util\retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='10.134.120.189', port=18000): Max retries exceeded with url: /file_parse (Caused by ConnectTimeoutError(<HTTPConnection(host='10.134.120.189', port=18000) at 0x219f3f37140>, 'Connection to 10.134.120.189 timed out. (connect timeout=120)'))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\cat\Desktop\OCR简易系统开发\routes\ocr.py", line 66, in parse_file
+    result = client.parse_file(str(save_path))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\services\ocr_client.py", line 25, in parse_file
+    response = requests.post(
+               ^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\.venv\Lib\site-packages\requests\adapters.py", line 688, in send
+    raise ConnectTimeout(e, request=request)
+requests.exceptions.ConnectTimeout: HTTPConnectionPool(host='10.134.120.189', port=18000): Max retries exceeded with url: /file_parse (Caused by ConnectTimeoutError(<HTTPConnection(host='10.134.120.189', port=18000) at 0x219f3f37140>, 'Connection to 10.134.120.189 timed out. (connect timeout=120)'))
+2026-03-06 14:18:40,444 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:18:40] "[35m[1mPOST /api/parse HTTP/1.1[0m" 500 -
+2026-03-06 14:20:03,380 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:03] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-03-06 14:20:03,397 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:03] "GET /ocr HTTP/1.1" 200 -
+2026-03-06 14:20:03,409 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:03] "GET /static/js/ocr.js HTTP/1.1" 200 -
+2026-03-06 14:20:03,412 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:03] "[36mGET /static/css/app.css HTTP/1.1[0m" 304 -
+2026-03-06 14:20:12,474 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:12] "GET /ocr HTTP/1.1" 200 -
+2026-03-06 14:20:12,484 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:12] "[36mGET /static/css/app.css HTTP/1.1[0m" 304 -
+2026-03-06 14:20:12,485 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:12] "[36mGET /static/js/ocr.js HTTP/1.1[0m" 304 -
+2026-03-06 14:20:13,209 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:13] "GET /stats HTTP/1.1" 200 -
+2026-03-06 14:20:13,216 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 14:20:13] "[36mGET /static/css/app.css HTTP/1.1[0m" 304 -
+2026-03-06 15:01:44,984 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:44] "GET /stats HTTP/1.1" 200 -
+2026-03-06 15:01:45,022 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:45] "[36mGET /static/css/app.css HTTP/1.1[0m" 304 -
+2026-03-06 15:01:46,255 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:46] "GET /ocr HTTP/1.1" 200 -
+2026-03-06 15:01:46,268 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:46] "[36mGET /static/css/app.css HTTP/1.1[0m" 304 -
+2026-03-06 15:01:46,268 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:46] "[36mGET /static/js/ocr.js HTTP/1.1[0m" 304 -
+2026-03-06 15:01:47,438 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:47] "[32mGET /logout HTTP/1.1[0m" 302 -
+2026-03-06 15:01:47,452 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:47] "GET /login HTTP/1.1" 200 -
+2026-03-06 15:01:47,461 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:47] "[36mGET /static/css/app.css HTTP/1.1[0m" 304 -
+2026-03-06 15:01:51,547 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:51] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-03-06 15:01:51,562 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:51] "GET /ocr HTTP/1.1" 200 -
+2026-03-06 15:01:51,573 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:51] "[36mGET /static/css/app.css HTTP/1.1[0m" 304 -
+2026-03-06 15:01:51,577 INFO [werkzeug] 127.0.0.1 - - [06/Mar/2026 15:01:51] "[36mGET /static/js/ocr.js HTTP/1.1[0m" 304 -
+2026-03-10 14:24:07,205 INFO [uvicorn.error] Application startup complete.
+2026-03-10 14:24:07,205 INFO [uvicorn.error] Application startup complete.
+2026-03-10 14:24:07,205 INFO [uvicorn.error] Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit)
+2026-03-10 14:24:07,205 INFO [uvicorn.error] Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit)
+2026-03-10 14:24:14,302 INFO [uvicorn.access] 127.0.0.1:63315 - "GET /stats HTTP/1.1" 200
+2026-03-10 14:25:11,025 INFO [uvicorn.error] Application startup complete.
+2026-03-10 14:25:11,025 INFO [uvicorn.error] Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit)
+2026-03-10 14:25:18,834 INFO [uvicorn.access] 127.0.0.1:49887 - "GET /stats HTTP/1.1" 200
+2026-03-10 14:26:15,582 INFO [uvicorn.error] Application startup complete.
+2026-03-10 14:26:15,582 INFO [uvicorn.error] Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit)
+2026-03-10 14:26:22,325 INFO [uvicorn.access] 127.0.0.1:56300 - "GET /stats HTTP/1.1" 200
+2026-03-10 14:44:25,095 INFO [uvicorn.access] 127.0.0.1:49858 - "GET /ocr HTTP/1.1" 200
+2026-03-10 14:44:25,128 INFO [uvicorn.access] 127.0.0.1:49858 - "GET /static/css/app.css HTTP/1.1" 304
+2026-03-10 15:09:10,886 INFO [uvicorn.error] Application startup complete.
+2026-03-10 15:09:10,886 INFO [uvicorn.error] Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit)
+2026-03-10 15:32:44,703 INFO [uvicorn.access] 127.0.0.1:61141 - "POST /api/parse HTTP/1.1" 200
+2026-03-10 15:41:03,675 INFO [uvicorn.access] 127.0.0.1:56704 - "POST /api/parse HTTP/1.1" 200
+2026-03-10 15:42:51,300 INFO [uvicorn.access] 127.0.0.1:56942 - "GET /ocr HTTP/1.1" 200
+2026-03-10 15:42:51,336 INFO [uvicorn.access] 127.0.0.1:56942 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-10 15:43:02,936 INFO [uvicorn.access] 127.0.0.1:56943 - "POST /api/parse HTTP/1.1" 200
+2026-03-10 15:54:36,449 INFO [uvicorn.access] 127.0.0.1:64381 - "GET /stats HTTP/1.1" 200
+2026-03-10 15:54:36,457 INFO [uvicorn.access] 127.0.0.1:64381 - "GET /static/css/app.css HTTP/1.1" 304
+2026-03-10 15:55:46,135 INFO [uvicorn.access] 127.0.0.1:50464 - "GET /ocr HTTP/1.1" 200
+2026-03-10 16:04:36,027 INFO [uvicorn.access] 127.0.0.1:61798 - "POST /api/parse HTTP/1.1" 200
+2026-03-11 15:18:26,471 INFO [uvicorn.access] 127.0.0.1:63969 - "POST /api/parse HTTP/1.1" 200
+2026-03-12 13:28:23,731 INFO [uvicorn.access] 127.0.0.1:62809 - "GET /stats HTTP/1.1" 200
+2026-03-12 13:28:23,772 INFO [uvicorn.access] 127.0.0.1:62809 - "GET /static/css/app.css HTTP/1.1" 304
+2026-03-12 13:28:24,336 INFO [uvicorn.access] 127.0.0.1:62809 - "GET /ocr HTTP/1.1" 200
+2026-03-12 13:28:24,345 INFO [uvicorn.access] 127.0.0.1:62809 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-13 10:35:41,778 INFO [uvicorn.access] 127.0.0.1:57961 - "GET /stats HTTP/1.1" 200
+2026-03-13 10:35:41,790 INFO [uvicorn.access] 127.0.0.1:57961 - "GET /static/css/app.css HTTP/1.1" 304
+2026-03-13 10:35:43,437 INFO [uvicorn.access] 127.0.0.1:57961 - "GET /ocr HTTP/1.1" 200
+2026-03-13 10:35:43,445 INFO [uvicorn.access] 127.0.0.1:57961 - "GET /static/js/ocr.js HTTP/1.1" 304
+2026-03-13 10:35:43,955 INFO [uvicorn.access] 127.0.0.1:57961 - "GET /stats HTTP/1.1" 200
+2026-03-21 14:21:59,910 INFO [uvicorn.error] Application startup complete.
+2026-03-21 14:21:59,911 INFO [uvicorn.error] Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit)
+2026-03-21 14:22:43,064 INFO [uvicorn.access] 127.0.0.1:64136 - "GET / HTTP/1.1" 303
+2026-03-21 14:22:43,103 INFO [uvicorn.access] 127.0.0.1:64136 - "GET /stats HTTP/1.1" 200
+2026-03-21 14:22:43,141 INFO [uvicorn.access] 127.0.0.1:64136 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 14:22:47,222 INFO [uvicorn.access] 127.0.0.1:64136 - "GET /ocr HTTP/1.1" 303
+2026-03-21 14:22:47,228 INFO [uvicorn.access] 127.0.0.1:64136 - "GET /login HTTP/1.1" 200
+2026-03-21 14:22:54,570 INFO [uvicorn.access] 127.0.0.1:59785 - "POST /login HTTP/1.1" 303
+2026-03-21 14:22:54,581 INFO [uvicorn.access] 127.0.0.1:59785 - "GET /ocr HTTP/1.1" 200
+2026-03-21 14:22:54,590 INFO [uvicorn.access] 127.0.0.1:59785 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 14:23:14,029 INFO [uvicorn.access] 127.0.0.1:52380 - "GET / HTTP/1.1" 303
+2026-03-21 14:23:14,056 INFO [uvicorn.access] 127.0.0.1:52380 - "GET /stats HTTP/1.1" 200
+2026-03-21 14:23:14,066 INFO [uvicorn.access] 127.0.0.1:52380 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 15:54:18,370 INFO [uvicorn.access] 127.0.0.1:56794 - "GET /ocr HTTP/1.1" 200
+2026-03-21 15:54:18,384 INFO [uvicorn.access] 127.0.0.1:56794 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 15:54:18,385 INFO [uvicorn.access] 127.0.0.1:56795 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 15:54:37,965 ERROR [routes.ocr] OCR 解析失败: task_id=7
+urllib3.exceptions.SSLError: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\adapters.py", line 667, in send
+    resp = conn.urlopen(
+           ^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\Lib\site-packages\urllib3\connectionpool.py", line 843, in urlopen
+    retries = retries.increment(
+              ^^^^^^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\Lib\site-packages\urllib3\util\retry.py", line 519, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='cdn-mineru.openxlab.org.cn', port=443): Max retries exceeded with url: /pdf/2026-03-21/1d022601-8329-4b52-a0c9-4f633c93a939.zip (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\cat\Desktop\OCR简易系统开发\routes\ocr.py", line 104, in parse_file
+    result = client.parse_file(str(save_path))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\services\ocr_client.py", line 45, in parse_file
+    markdown = self._download_markdown(zip_url)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\Desktop\OCR简易系统开发\services\ocr_client.py", line 131, in _download_markdown
+    response = requests.get(zip_url, timeout=self.timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\api.py", line 73, in get
+    return request("get", url, params=params, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\adapters.py", line 698, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='cdn-mineru.openxlab.org.cn', port=443): Max retries exceeded with url: /pdf/2026-03-21/1d022601-8329-4b52-a0c9-4f633c93a939.zip (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)')))
+2026-03-21 15:54:37,984 INFO [uvicorn.access] 127.0.0.1:56800 - "POST /api/parse HTTP/1.1" 500
+2026-03-21 15:58:38,274 INFO [uvicorn.access] 127.0.0.1:65498 - "GET /ocr HTTP/1.1" 200
+2026-03-21 15:58:52,976 INFO [uvicorn.access] 127.0.0.1:65502 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 16:09:21,085 INFO [uvicorn.access] 127.0.0.1:57913 - "GET /stats HTTP/1.1" 200
+2026-03-21 16:18:30,577 INFO [uvicorn.access] 127.0.0.1:53649 - "GET /ocr HTTP/1.1" 200
+2026-03-21 16:18:30,613 INFO [uvicorn.access] 127.0.0.1:53649 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 16:18:30,620 INFO [uvicorn.access] 127.0.0.1:50844 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 16:18:52,217 INFO [uvicorn.access] 127.0.0.1:53112 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 16:27:22,972 INFO [uvicorn.access] 127.0.0.1:54455 - "GET /ocr HTTP/1.1" 200
+2026-03-21 16:27:22,981 INFO [uvicorn.access] 127.0.0.1:54455 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 16:27:22,985 INFO [uvicorn.access] 127.0.0.1:50880 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 16:27:36,928 INFO [uvicorn.access] 127.0.0.1:59944 - "GET /stats HTTP/1.1" 200
+2026-03-21 16:27:40,137 INFO [uvicorn.access] 127.0.0.1:59944 - "GET /ocr HTTP/1.1" 200
+2026-03-21 16:27:40,145 INFO [uvicorn.access] 127.0.0.1:59944 - "GET /static/js/ocr.js HTTP/1.1" 304
+2026-03-21 16:27:57,550 INFO [uvicorn.access] 127.0.0.1:52320 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 16:33:37,422 INFO [uvicorn.access] 127.0.0.1:55055 - "GET /stats HTTP/1.1" 200
+2026-03-21 16:33:37,431 INFO [uvicorn.access] 127.0.0.1:55055 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 16:33:38,781 INFO [uvicorn.access] 127.0.0.1:55055 - "GET /ocr HTTP/1.1" 200
+2026-03-21 16:33:38,792 INFO [uvicorn.access] 127.0.0.1:55055 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 16:33:49,275 INFO [uvicorn.access] 127.0.0.1:53234 - "GET /ocr HTTP/1.1" 200
+2026-03-21 16:33:49,298 INFO [uvicorn.access] 127.0.0.1:53234 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 16:33:49,306 INFO [uvicorn.access] 127.0.0.1:51685 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 16:34:09,860 INFO [uvicorn.access] 127.0.0.1:59016 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 16:36:14,902 INFO [uvicorn.access] 127.0.0.1:63779 - "GET /ocr HTTP/1.1" 200
+2026-03-21 16:36:14,921 INFO [uvicorn.access] 127.0.0.1:63779 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 16:36:14,925 INFO [uvicorn.access] 127.0.0.1:56647 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 16:36:19,701 INFO [uvicorn.access] 127.0.0.1:56647 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 16:36:26,085 INFO [uvicorn.access] 127.0.0.1:61675 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 16:38:21,644 INFO [uvicorn.access] 127.0.0.1:55742 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 16:52:19,165 INFO [uvicorn.access] 127.0.0.1:62192 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 16:52:19,182 INFO [uvicorn.access] 127.0.0.1:62192 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 16:52:19,189 INFO [uvicorn.access] 127.0.0.1:62352 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 16:52:25,788 INFO [uvicorn.access] 127.0.0.1:59473 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 16:52:34,379 INFO [uvicorn.access] 127.0.0.1:60144 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 17:00:56,634 INFO [uvicorn.access] 127.0.0.1:57995 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 17:00:56,648 INFO [uvicorn.access] 127.0.0.1:57995 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 17:00:56,651 INFO [uvicorn.access] 127.0.0.1:57755 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 17:01:09,427 ERROR [routes.ocr] OCR 解析失败: task_id=14
+urllib3.exceptions.SSLError: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\adapters.py", line 667, in send
+    resp = conn.urlopen(
+           ^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\Lib\site-packages\urllib3\connectionpool.py", line 843, in urlopen
+    retries = retries.increment(
+              ^^^^^^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\Lib\site-packages\urllib3\util\retry.py", line 519, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='cdn-mineru.openxlab.org.cn', port=443): Max retries exceeded with url: /pdf/2026-03-21/1d022601-8329-4b52-a0c9-4f633c93a939.zip (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\cat\Desktop\OCR简易系统开发\routes\ocr.py", line 104, in parse_file
+    )
+      
+  File "C:\Users\cat\Desktop\OCR简易系统开发\services\ocr_client.py", line 45, in parse_file
+  File "C:\Users\cat\Desktop\OCR简易系统开发\services\ocr_client.py", line 131, in _download_markdown
+    def _download_with_retry(self, zip_url: str) -> bytes:
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\api.py", line 73, in get
+    return request("get", url, params=params, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cat\AppData\Roaming\Python\Python312\site-packages\requests\adapters.py", line 698, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='cdn-mineru.openxlab.org.cn', port=443): Max retries exceeded with url: /pdf/2026-03-21/1d022601-8329-4b52-a0c9-4f633c93a939.zip (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)')))
+2026-03-21 17:01:09,436 INFO [uvicorn.access] 127.0.0.1:61670 - "POST /api/parse HTTP/1.1" 500
+2026-03-21 17:01:27,286 INFO [uvicorn.access] 127.0.0.1:49770 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 17:21:17,049 INFO [uvicorn.access] 127.0.0.1:59660 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 17:21:17,064 INFO [uvicorn.access] 127.0.0.1:59660 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 17:21:17,067 INFO [uvicorn.access] 127.0.0.1:62665 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 17:21:30,793 INFO [uvicorn.access] 127.0.0.1:51681 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 17:24:34,203 INFO [uvicorn.access] 127.0.0.1:59897 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 17:24:34,224 INFO [uvicorn.access] 127.0.0.1:59897 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 17:24:34,225 INFO [uvicorn.access] 127.0.0.1:62320 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 17:24:54,505 INFO [uvicorn.access] 127.0.0.1:59012 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 17:28:19,544 INFO [uvicorn.access] 127.0.0.1:52910 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 17:28:19,563 INFO [uvicorn.access] 127.0.0.1:52910 - "GET /static/css/app.css HTTP/1.1" 200
+2026-03-21 17:28:19,567 INFO [uvicorn.access] 127.0.0.1:56330 - "GET /static/js/ocr.js HTTP/1.1" 200
+2026-03-21 17:28:33,366 INFO [uvicorn.access] 127.0.0.1:56330 - "POST /api/parse HTTP/1.1" 200
+2026-03-21 17:51:30,194 INFO [uvicorn.access] 127.0.0.1:53310 - "GET /ocr?file=MX-B4053R_20260320_185349-1-4.pdf HTTP/1.1" 200
+2026-03-21 17:51:30,213 INFO [uvicorn.access] 127.0.0.1:53310 - "GET /static/css/app.css HTTP/1.1" 304
+2026-03-21 17:51:30,217 INFO [uvicorn.access] 127.0.0.1:61691 - "GET /static/js/ocr.js HTTP/1.1" 304

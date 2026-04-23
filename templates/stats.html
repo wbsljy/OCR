@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}统计概览 | {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div>
+        <h1>数据统计概览</h1>
+    </div>
+</section>
+
+<section class="stats-grid">
+    <div class="stat-card">
+        <span class="stat-label">总上传数</span>
+        <strong>{{ total_count }}</strong>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">成功数</span>
+        <strong>{{ success_count }}</strong>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">失败数</span>
+        <strong>{{ failed_count }}</strong>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">未验证</span>
+        <strong>{{ unverified_count }}</strong>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">已验证</span>
+        <strong>{{ verified_count }}</strong>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">平均耗时(ms)</span>
+        <strong>{{ avg_elapsed }}</strong>
+    </div>
+</section>
+
+<section class="recent-section stats-dual-panels">
+    <div class="panel">
+        <div class="panel-title">待验证任务（冲压）</div>
+        <div class="recent-table-wrapper">
+            <table class="recent-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>上传时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in unverified_chongya_tasks %}
+                    <tr class="task-row task-row-clickable" data-href="/ocr?task_id={{ task.id }}" role="button" tabindex="0">
+                        <td>{{ task.id }}</td>
+                        <td>{{ task.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="2" class="empty-tip">暂无冲压类待验证任务。</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="panel">
+        <div class="panel-title">待验证任务（金加）</div>
+        <div class="recent-table-wrapper">
+            <table class="recent-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>上传时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in unverified_jinjia_tasks %}
+                    <tr class="task-row task-row-clickable" data-href="/ocr?task_id={{ task.id }}" role="button" tabindex="0">
+                        <td>{{ task.id }}</td>
+                        <td>{{ task.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="2" class="empty-tip">暂无金加类待验证任务。</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+{% if unverified_unknown_tasks %}
+<section class="recent-section">
+    <div class="panel">
+        <div class="panel-title">待验证任务（未识别类型）</div>
+        <p class="page-tip">无法从识别结果中判断冲压/金加，请人工打开核对。</p>
+        <div class="recent-table-wrapper">
+            <table class="recent-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>上传时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in unverified_unknown_tasks %}
+                    <tr class="task-row task-row-clickable" data-href="/ocr?task_id={{ task.id }}" role="button" tabindex="0">
+                        <td>{{ task.id }}</td>
+                        <td>{{ task.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="recent-section">
+    <div class="panel">
+        <div class="panel-title">已验证记录（看板库）</div>
+        <form class="stats-filter-form" method="get" action="{{ request.url_for('stats_page') }}">
+            <div class="stats-filter-row">
+                <label>生产日期从
+                    <input type="date" name="v_start" value="{{ v_start }}">
+                </label>
+                <label>至
+                    <input type="date" name="v_end" value="{{ v_end }}">
+                </label>
+                <button type="submit">筛选</button>
+            </div>
+            <div class="stats-dual-grid">
+                <div class="stats-filter-col">
+                    <h3 class="stats-filter-heading">冲压</h3>
+                    <label>制程
+                        <select name="cy_process">
+                            <option value="">全部</option>
+                            {% for p in chongya_process_options %}
+                            <option value="{{ p }}" {% if cy_process == p %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>班别
+                        <select name="cy_shift">
+                            <option value="">不限</option>
+                            {% for s in shift_options %}
+                            {% if s != '不限' %}
+                            <option value="{{ s }}" {% if cy_shift == s %}selected{% endif %}>{{ s }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+                <div class="stats-filter-col">
+                    <h3 class="stats-filter-heading">金加</h3>
+                    <label>制程
+                        <select name="jj_process">
+                            <option value="">全部</option>
+                            {% for p in jinjia_process_options %}
+                            <option value="{{ p }}" {% if jj_process == p %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>班别
+                        <select name="jj_shift">
+                            <option value="">不限</option>
+                            {% for s in shift_options %}
+                            {% if s != '不限' %}
+                            <option value="{{ s }}" {% if jj_shift == s %}selected{% endif %}>{{ s }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+            </div>
+        </form>
+    </div>
+</section>
+
+<section class="recent-section stats-dual-panels">
+    <div class="panel">
+        <div class="panel-title">已验证 — 冲压（key=沖壓）</div>
+        <div class="recent-table-wrapper">
+            <table class="recent-table">
+                <thead>
+                    <tr>
+                        <th>任务 ID</th>
+                        <th>制程</th>
+                        <th>班别</th>
+                        <th>生产日期</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in verified_board_chongya %}
+                    <tr>
+                        <td>{{ row.task_id }}</td>
+                        <td>{{ row.process_name }}</td>
+                        <td>{{ row.shift or '-' }}</td>
+                        <td>{{ row.production_date }}</td>
+                        <td><a href="/ocr?task_id={{ row.task_id }}">重新验证</a></td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="empty-tip">当前条件下暂无冲压看板记录。</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="panel">
+        <div class="panel-title">已验证 — 金加（key=金加）</div>
+        <div class="recent-table-wrapper">
+            <table class="recent-table">
+                <thead>
+                    <tr>
+                        <th>任务 ID</th>
+                        <th>制程</th>
+                        <th>班别</th>
+                        <th>生产日期</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in verified_board_jinjia %}
+                    <tr>
+                        <td>{{ row.task_id }}</td>
+                        <td>{{ row.process_name }}</td>
+                        <td>{{ row.shift or '-' }}</td>
+                        <td>{{ row.production_date }}</td>
+                        <td><a href="/ocr?task_id={{ row.task_id }}">重新验证</a></td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="empty-tip">当前条件下暂无金加看板记录。</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<script>
+document.querySelectorAll('.task-row-clickable[data-href]').forEach(function(row) {
+    row.addEventListener('click', function() {
+        var href = row.getAttribute('data-href');
+        if (href) window.location.href = href;
+    });
+});
+</script>
+{% endblock %}

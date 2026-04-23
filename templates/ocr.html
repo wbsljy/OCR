@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}OCR 解析 | {{ app_name }}{% endblock %}
+
+{% block body_class %}page--ocr-workspace{% endblock %}
+
+{% block content %}
+<!-- 页面说明区，告诉用户当前页的核心用途。 -->
+<section class="page-header">
+    <div>
+        <h1>OCR 解析</h1>
+        <p class="page-tip">上传图片或 PDF，左侧预览原文件，右侧在识别表格中直接校对单元格内容。</p>
+    </div>
+</section>
+
+<!-- 上传区，负责选择文件并触发 OCR 解析。 -->
+<section class="upload-panel">
+    <form id="ocr-form" class="upload-form">
+        <label for="file-input" class="field-label">选择文件</label>
+        <input id="file-input" name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp">
+        <button type="submit">开始解析</button>
+        <span id="status-text" class="status-text">等待上传</span>
+    </form>
+</section>
+
+<!-- 主工作区：左侧原文件预览，右侧 OCR 渲染结果。共用一组分页控件。 -->
+<section class="workspace-section">
+    <div id="page-nav" class="page-nav page-nav-unified" style="display: none;">
+        <div class="page-nav-row page-nav-row--tasks">
+            <button type="button" id="btn-prev-task" class="btn-page">上一任务</button>
+            <span id="page-info" class="page-info">待验证队列</span>
+            <button type="button" id="btn-next-task" class="btn-page">下一任务</button>
+        </div>
+        <div id="segment-nav" class="page-nav-row page-nav-row--segments" style="display: none;">
+            <button type="button" id="btn-prev-segment" class="btn-page btn-page-sub">上一段</button>
+            <span id="segment-info" class="page-info page-info-sub"></span>
+            <button type="button" id="btn-next-segment" class="btn-page btn-page-sub">下一段</button>
+        </div>
+    </div>
+    <div class="workspace-grid">
+        <div class="panel">
+            <div class="panel-title">原文件预览</div>
+            <div id="preview-container" class="preview-container">
+                <p class="empty-tip">上传后将在这里预览图片或 PDF。</p>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">识别表格</div>
+            <div id="verify-bar" class="verify-bar" style="display: none;">
+                <span id="verify-status" class="verify-status">待验证</span>
+                <button type="button" id="btn-verify" class="btn-verify">通过</button>
+            </div>
+            <div id="ocr-result-panel" class="ocr-result-panel">
+                <div id="ocr-result-meta" class="ocr-result-meta" aria-label="识别摘要"></div>
+                <div class="ocr-result-tables-wrap">
+                    <div id="ocr-result-tables" class="ocr-result-tables" aria-label="可编辑表格">
+                        <p class="empty-tip">暂无内容</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- JavaScript 初始化脚本：设置预设任务 ID 变量 -->
+<script>
+    // 使用 tojson 过滤器将后端 None 安全转换为 JS null
+    window.OCR_PRESET_TASK_ID = {{ (preset_task_id | default(None)) | tojson }};
+    window.OCR_UNVERIFIED_TASK_IDS = {{ (unverified_task_ids | default([])) | tojson }};
+</script>
+<script src="{{ url_for('static', path='js/pdf.min.js') }}"></script>
+<script>
+    // 配置 PDF.js worker 使用本地文件
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '{{ url_for("static", path="js/pdf.worker.min.js") }}';
+</script>
+<script type="module" src="{{ url_for('static', path='js/ocr-main.js') }}"></script>
+{% endblock %}
+
