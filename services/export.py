@@ -26,6 +26,7 @@ from services.dashboard_service import (
     parse_iso_date,
 )
 from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.chart.layout import Layout, ManualLayout
 from openpyxl.chart.label import DataLabel, DataLabelList
 from openpyxl.chart.text import RichText
 from openpyxl.drawing.text import (
@@ -35,6 +36,29 @@ from openpyxl.drawing.text import (
     RichTextProperties,
 )
 from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+
+
+def _finalize_dashboard_rate_chart(bar: BarChart, ws: Any) -> None:
+    """缩小绘图区、略增大表上图表占位，减轻标题/坐标轴/底部图例在 Excel 中重叠。"""
+    bar.layout = Layout(
+        manualLayout=ManualLayout(
+            layoutTarget="outer",
+            xMode="edge",
+            yMode="edge",
+            wMode="edge",
+            hMode="edge",
+            x=0.06,
+            y=0.13,
+            w=0.88,
+            h=0.85,
+        )
+    )
+    bar.anchor = TwoCellAnchor(
+        _from=AnchorMarker(col=0, colOff=0, row=1, rowOff=0),
+        to=AnchorMarker(col=10, colOff=0, row=10, rowOff=0),
+    )
+    ws.add_chart(bar)
+
 
 def export_rows_is_empty(rows: pd.DataFrame | Sequence[Any]) -> bool:
     if isinstance(rows, pd.DataFrame):
@@ -188,6 +212,10 @@ def add_native_good_rate_chart_choya(ws, final_data: pd.DataFrame, anchor: str =
     bar_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=3, max_row=3)
     bar.add_data(bar_data, titles_from_data=True, from_rows=True)
     bar.set_categories(cats)
+    bar.x_axis.delete = False
+    bar.y_axis.delete = False
+    bar.x_axis.tickLblPos = "nextTo"
+    bar.y_axis.tickLblPos = "nextTo"
     if bar.series:
         bar.series[0].graphicalProperties.solidFill = "8EC7F7"
         bar.series[0].graphicalProperties.line.solidFill = "4A90E2"
@@ -261,12 +289,7 @@ def add_native_good_rate_chart_choya(ws, final_data: pd.DataFrame, anchor: str =
     bar += line
     bar.legend.position = "b"
     bar.legend.txPr = _text_props(7.5)
-    # 使用单元格锚定，强制图表填充 A2 到 A10 区域，避免尺寸挤压。
-    bar.anchor = TwoCellAnchor(
-        _from=AnchorMarker(col=0, colOff=0, row=1, rowOff=0),  
-        to=AnchorMarker(col=10, colOff=0, row=10, rowOff=0),    
-    )
-    ws.add_chart(bar)
+    _finalize_dashboard_rate_chart(bar, ws)
 
 def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, anchor: str = "A2") -> None:
     """
@@ -351,6 +374,10 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
     bar_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=3, max_row=3)
     bar.add_data(bar_data, titles_from_data=True, from_rows=True)
     bar.set_categories(cats)
+    bar.x_axis.delete = False
+    bar.y_axis.delete = False
+    bar.x_axis.tickLblPos = "nextTo"
+    bar.y_axis.tickLblPos = "nextTo"
     if bar.series:
         bar.series[0].graphicalProperties.solidFill = "8EC7F7"
         bar.series[0].graphicalProperties.line.solidFill = "4A90E2"
@@ -424,12 +451,7 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
     bar += line
     bar.legend.position = "b"
     bar.legend.txPr = _text_props(7.5)
-    # 使用单元格锚定，强制图表填充 A2 到 A10 区域，避免尺寸挤压。
-    bar.anchor = TwoCellAnchor(
-        _from=AnchorMarker(col=0, colOff=0, row=1, rowOff=0),  
-        to=AnchorMarker(col=10, colOff=0, row=10, rowOff=0),    
-    )
-    ws.add_chart(bar)
+    _finalize_dashboard_rate_chart(bar, ws)
 
 def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor: str = "A2") -> None:
     """
@@ -514,6 +536,10 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     bar_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=3, max_row=3)
     bar.add_data(bar_data, titles_from_data=True, from_rows=True)
     bar.set_categories(cats)
+    bar.x_axis.delete = False
+    bar.y_axis.delete = False
+    bar.x_axis.tickLblPos = "nextTo"
+    bar.y_axis.tickLblPos = "nextTo"
     if bar.series:
         bar.series[0].graphicalProperties.solidFill = "8EC7F7"
         bar.series[0].graphicalProperties.line.solidFill = "4A90E2"
@@ -587,12 +613,7 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     bar += line
     bar.legend.position = "b"
     bar.legend.txPr = _text_props(7.5)
-    # 使用单元格锚定，强制图表填充 A2 到 A10 区域，避免尺寸挤压。
-    bar.anchor = TwoCellAnchor(
-        _from=AnchorMarker(col=0, colOff=0, row=1, rowOff=0),  
-        to=AnchorMarker(col=10, colOff=0, row=10, rowOff=0),    
-    )
-    ws.add_chart(bar)
+    _finalize_dashboard_rate_chart(bar, ws)
 
 def build_dashboard_export_bytes(
     key,
