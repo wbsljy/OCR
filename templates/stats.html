@@ -188,6 +188,7 @@
                         <th>制程</th>
                         <th>班别</th>
                         <th>生产日期</th>
+                        <th>页码</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -198,11 +199,12 @@
                         <td>{{ row.process_name }}</td>
                         <td>{{ row.shift or '-' }}</td>
                         <td>{{ row.production_date }}</td>
+                        <td>{% if row.part is defined and row.part is not none %}{{ row.part }}{% else %}-{% endif %}</td>
                         <td><a href="/ocr?task_id={{ row.task_id }}">重新验证</a></td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="5" class="empty-tip">当前条件下暂无冲压看板记录。</td>
+                        <td colspan="6" class="empty-tip">当前条件下暂无冲压看板记录。</td>
                     </tr>
                     {% endfor %}
                 </tbody>

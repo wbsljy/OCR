@@ -353,7 +353,7 @@ body.page--ocr-workspace .page-shell {
     width: max-content;
     max-width: 100%;
     border-collapse: collapse;
-    font-size: 9px; /* 表格字体大小设置 */
+    font-size: 12px; /* 表格字体大小设置 */
     line-height: 1.2;
 }
 

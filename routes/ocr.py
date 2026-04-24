@@ -481,7 +481,7 @@ def task_verify(
             {
                 "success": False,
                 "code": "dashboard_duplicate",
-                "message": "已存在相同生产日期与班别（及抽检位置）的看板记录，是否覆盖？",
+                "message": "已存在相同业务键的看板记录（生产日期、班别、品名；锻压另含页码；CNC0 另含抽检位置），是否覆盖？",
                 "conflicts": conflicts,
             },
             status_code=status.HTTP_409_CONFLICT,

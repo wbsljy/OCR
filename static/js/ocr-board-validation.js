@@ -23,7 +23,48 @@ const SUMMARY_TOGGLE_OPTIONS = {
     班別: ["白班", "晚班"],
     品名: ["Y20 Housing", "X3784 Housing"],
     抽檢位置: ["製程抽檢", "入庫抽檢"],
+    页码: ["1", "2"],
+    頁碼: ["1", "2"],
 };
+
+const PAGE_TOGGLE_SEQUENCE = Object.freeze(["1", "2"]);
+
+/** 去空白、零宽、兼容组合，便于与 SUMMARY_TOGGLE_OPTIONS / OCR 标签对齐 */
+function normalizeSummaryToggleKey(raw) {
+    let s = String(raw ?? "").trim().replace(/[\u200b-\u200d\ufeff]/g, "");
+    try {
+        s = s.normalize("NFKC");
+    } catch {
+        /* ignore */
+    }
+    return s.replace(/\s+/g, "");
+}
+
+function isPageLikeSummaryKey(key) {
+    const k = normalizeSummaryToggleKey(key);
+    return k === "页码" || k === "頁碼";
+}
+
+/** 与班別等一致：按字段名解析切换选项（页码支持简繁与别名字面） */
+function resolveSummaryToggleOptions(key) {
+    if (key == null || key === "") return null;
+    const direct = SUMMARY_TOGGLE_OPTIONS[key];
+    if (direct) return direct;
+    const trimmed = String(key).trim();
+    const direct2 = SUMMARY_TOGGLE_OPTIONS[trimmed];
+    if (direct2) return direct2;
+    if (isPageLikeSummaryKey(key)) return [...PAGE_TOGGLE_SEQUENCE];
+    return null;
+}
+
+/** 把 OCR/模型返回值规范为「1」「2」，便于 indexOf 与班別切换逻辑一致 */
+function normalizePageDisplayValue(raw) {
+    const s = String(raw ?? "").trim();
+    if (s === "1" || s === "2") return s;
+    const last = [...s.matchAll(/[12]/g)].pop();
+    if (last) return last[0];
+    return "1";
+}
 
 /**
  * 固熔第一行線別：空为通过；非空则仅允许 A–Z、a–z 与「線」（与后端 gurong_line_processor 一致）。
@@ -175,7 +216,7 @@ function isSummaryTable(table) {
     // 多行摘要（OCR 常把第二段摘要拆成多行）：行数少且含摘要字段，每行至少一格「字段：值」
     if (rows.length > 4) return false;
     const blob = (table.innerText || "").replace(/\s+/g, " ");
-    if (!/(生產日期|班別|品名|製程|抽檢)/.test(blob)) return false;
+    if (!/(生產日期|班別|品名|製程|抽檢|页码|頁碼)/.test(blob)) return false;
     for (const tr of rows) {
         const cells = tr.querySelectorAll("td, th");
         if (!cells.length) return false;
@@ -187,17 +228,30 @@ function isSummaryTable(table) {
 
 /**
  * 在 isSummaryTable 之上：第二段单行摘要偶发少一格「：」时仍视为摘要，避免只收集到一张主表、锁定按钮不出现。
+ * 多行摘要（2～4 行）且含製程/生產日期/班別或页码等时亦视为摘要，否则 setupSummaryTableControls 拿不到表、页码无 ↻。
  */
 function isSummaryTableRelaxed(table) {
     if (isSummaryTable(table)) return true;
     const rows = table.querySelectorAll("tr");
-    if (rows.length !== 1) return false;
     const blob = (table.innerText || "").replace(/\s+/g, " ");
-    return (
+    const hasCore =
         /製程\s*[：:]/.test(blob) &&
         /生產日期\s*[：:]/.test(blob) &&
-        /(班別|品名|抽檢)/.test(blob)
-    );
+        /(班別|品名|抽檢|页码|頁碼)/.test(blob);
+    if (!hasCore) return false;
+    if (rows.length === 1) {
+        return true;
+    }
+    if (rows.length >= 2 && rows.length <= 4) {
+        for (const tr of rows) {
+            const cells = tr.querySelectorAll("td, th");
+            if (!cells.length) return false;
+            const rowOk = [...cells].some((td) => /[：:]/.test((td.textContent || "").trim()));
+            if (!rowOk) return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 function parseSummaryTable(table) {
@@ -207,6 +261,50 @@ function parseSummaryTable(table) {
         if (pair?.key) summary[pair.key] = pair.value;
     });
     return summary;
+}
+
+/**
+ * 与库表 UNIQUE 对齐：多段「摘要+主表」之间不得出现相同业务键（含品名；鍛壓另含页码；CNC0 另含抽检位置）。
+ */
+function validateDuplicateBizKeysAcrossSummaryBlocks() {
+    const wrap = getOcrResultTables();
+    if (!wrap) {
+        return { ok: true, errorCount: 0, message: null, focusTarget: null };
+    }
+    const tables = [...wrap.querySelectorAll("table")];
+    const seen = new Map();
+    for (let i = 0; i < tables.length; i++) {
+        if (!isSummaryTableRelaxed(tables[i]) || !tables[i + 1]) continue;
+        const summary = parseSummaryTable(tables[i]);
+        const process = normalizeProcessName(summary["製程"] || "");
+        const date = (summary["生產日期"] || "").trim();
+        const shift = (summary["班別"] || "").trim();
+        const product = (summary["品名"] || "").trim();
+        const keyHint = inferKeyFromProcess(process);
+        if (!process || !keyHint || !date) continue;
+        const parts = [keyHint, process, date, shift, product];
+        if (process === "鍛壓") {
+            parts.push(`p${normalizePageDisplayValue(summary["页码"] || summary["頁碼"] || "1")}`);
+        }
+        if (process === "CNC0") {
+            parts.push(`i${(summary["抽檢位置"] || "").trim()}`);
+        }
+        const biz = parts.join("|");
+        if (seen.has(biz)) {
+            const prev = seen.get(biz);
+            prev.querySelectorAll("td, th").forEach((c) => c.classList.add("md-cell-invalid"));
+            tables[i].querySelectorAll("td, th").forEach((c) => c.classList.add("md-cell-invalid"));
+            return {
+                ok: false,
+                errorCount: 1,
+                message:
+                    "存在两段摘要的业务键完全相同（须区分：品名、鍛壓页码、或 CNC0 抽检位置等）。请修改后再提交。",
+                focusTarget: tables[i],
+            };
+        }
+        seen.set(biz, tables[i]);
+    }
+    return { ok: true, errorCount: 0, message: null, focusTarget: null };
 }
 
 function parseSummaryTableEntries(table) {
@@ -225,6 +323,17 @@ function parseSummaryTableEntries(table) {
     return { entries, malformedCells };
 }
 
+/** 按最长前缀匹配，避免「值里含冒号」时 indexOf 第一个冒号拆错键（页码等拿不到 toggle） */
+const SUMMARY_KNOWN_PREFIXES = [
+    "抽檢位置",
+    "生產日期",
+    "班別",
+    "品名",
+    "製程",
+    "页码",
+    "頁碼",
+];
+
 function readSummaryCellPair(cell) {
     const labelEl = cell.querySelector(".summary-field-label");
     const valueEl = cell.querySelector(".summary-field-value");
@@ -235,6 +344,14 @@ function readSummaryCellPair(cell) {
         };
     }
     const t = (cell.textContent || "").replace(/\s+/g, " ").trim();
+    for (const prefix of SUMMARY_KNOWN_PREFIXES) {
+        if (!t.startsWith(prefix)) continue;
+        const rest = t.slice(prefix.length);
+        const m = rest.match(/^\s*[：:]\s*(.*)$/);
+        if (m) {
+            return { key: prefix, value: (m[1] || "").trim() };
+        }
+    }
     const sep = t.includes("：") ? "：" : t.includes(":") ? ":" : null;
     if (!sep) return null;
     const i = t.indexOf(sep);
@@ -245,7 +362,7 @@ function readSummaryCellPair(cell) {
 }
 
 function renderSummaryCellContent(cell, key, value, readOnly) {
-    const toggleOptions = SUMMARY_TOGGLE_OPTIONS[key];
+    const toggleOptions = resolveSummaryToggleOptions(key);
     cell.innerHTML = "";
     cell.dataset.summaryKey = key;
 
@@ -262,7 +379,11 @@ function renderSummaryCellContent(cell, key, value, readOnly) {
 
     const valueSpan = document.createElement("span");
     valueSpan.className = "summary-field-value";
-    valueSpan.textContent = value || "";
+    let displayValue = value || "";
+    if (toggleOptions?.length === 2 && toggleOptions[0] === "1" && toggleOptions[1] === "2") {
+        displayValue = normalizePageDisplayValue(value);
+    }
+    valueSpan.textContent = displayValue;
     if (!readOnly && SUMMARY_DIRECT_EDIT_FIELDS.has(key)) {
         valueSpan.setAttribute("contenteditable", "true");
         valueSpan.classList.add("summary-field-value-editable");
@@ -283,10 +404,14 @@ function renderSummaryCellContent(cell, key, value, readOnly) {
         btn.setAttribute("aria-label", `切换${key}`);
         btn.addEventListener("click", (event) => {
             event.preventDefault();
-            const currentValue = valueSpan.textContent || "";
+            let currentValue = (valueSpan.textContent || "").trim();
+            if (toggleOptions[0] === "1" && toggleOptions[1] === "2") {
+                currentValue = normalizePageDisplayValue(currentValue);
+                valueSpan.textContent = currentValue;
+            }
             const idx = toggleOptions.indexOf(currentValue);
-            const nextValue = toggleOptions[(idx + 1 + toggleOptions.length) % toggleOptions.length];
-            valueSpan.textContent = nextValue;
+            const nextIdx = idx >= 0 ? (idx + 1) % toggleOptions.length : 0;
+            valueSpan.textContent = toggleOptions[nextIdx];
             cell.classList.remove("md-cell-invalid");
         });
         cell.appendChild(btn);
@@ -294,11 +419,16 @@ function renderSummaryCellContent(cell, key, value, readOnly) {
 }
 
 export function setupSummaryTableControls(ctx, readOnly) {
-    const list = ctx.summaryTables?.length
-        ? ctx.summaryTables
-        : ctx.summaryTable
-          ? [ctx.summaryTable]
-          : [];
+    const wrap = getOcrResultTables();
+    const fromDom = wrap ? [...wrap.querySelectorAll("table")].filter(isSummaryTableRelaxed) : [];
+    const list =
+        fromDom.length > 0
+            ? fromDom
+            : ctx?.summaryTables?.length
+              ? ctx.summaryTables
+              : ctx?.summaryTable
+                ? [ctx.summaryTable]
+                : [];
     for (const table of list) {
         table.querySelectorAll("td, th").forEach((cell) => {
             const pair = readSummaryCellPair(cell);
@@ -567,18 +697,20 @@ export function runBoardValidationBeforeSubmit() {
     clearOcrCellInvalidMarks();
     const ctx = getValidationTableContext();
 
+    const dupResult = validateDuplicateBizKeysAcrossSummaryBlocks();
     const summaryResult = validateSummaryTable(ctx);
     const mainResult = validateMainTable(ctx);
-    const totalErrors = summaryResult.errorCount + mainResult.errorCount;
-    const firstMessage = summaryResult.message || mainResult.message;
+    const totalErrors = dupResult.errorCount + summaryResult.errorCount + mainResult.errorCount;
+    const firstMessage = dupResult.message || summaryResult.message || mainResult.message;
 
     return {
-        ok: summaryResult.ok && mainResult.ok,
+        ok: dupResult.ok && summaryResult.ok && mainResult.ok,
         errorCount: totalErrors,
         message:
             firstMessage ||
             (totalErrors > 0 ? `校验未通过：有 ${totalErrors} 个单元格格式不符，已标红。` : null),
         focusTarget:
+            dupResult.focusTarget ||
             summaryResult.focusTarget ||
             mainResult.focusTarget ||
             ctx.summaryTables?.[0] ||
@@ -645,6 +777,12 @@ function validateOneSummaryTable(summaryTable) {
         }
     } else if (inspectionValue && !SUMMARY_ALLOWED_INSPECTION_LOCATIONS.has(inspectionValue)) {
         markInvalid(inspectionEntry?.cell);
+    }
+
+    const pageEntry = entries["页码"] || entries["頁碼"];
+    const pageValue = (pageEntry?.value || "").trim();
+    if (keyName === "沖壓" && processValue === "鍛壓" && pageValue && pageValue !== "1" && pageValue !== "2") {
+        markInvalid(pageEntry?.cell || firstCell);
     }
 
     invalidCells.forEach((cell) => cell.classList.add("md-cell-invalid"));

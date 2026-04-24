@@ -45,6 +45,22 @@ SYSTEM_PROMPT_2 = """你是一個信息提取助手。下面是從 OCR 識別得
  "抽檢位置": "製程抽檢" | "入庫抽檢" | null 
 }
 """
+SYSTEM_PROMPT_鍛壓 = """你是一個信息提取助手。下面是從 OCR 識別得到的 Markdown 文本，其中可能包含生產記錄信息。請從中提取以下四個字段，並以嚴格的 JSON 格式輸出，不要添加任何解釋或額外文字。
+
+**字段定義**：
+- `生產日期`：格式爲 yyyy-mm-dd（例如 2026-03-24）。如果文本中沒有明確日期，嘗試從上下文推斷；若完全無法確定，輸出 null。
+- `班別`：只能是以下兩種之一："白班" 或 "晚班"。如果文本中沒有明確，輸出 null。
+- `品名`：只能是 "Y20 Housing" 或 "X3784 Housing"。如果文本中出現類似但拼寫略有差異的名稱，請根據最接近的匹配輸出標準名稱；若無法識別，輸出 null。
+- `製程`：只能是 "時效"、"鍛壓"、"固熔" 之一。若文本中出現其他工藝名稱，請根據含義匹配到最接近的類別；若無法匹配，輸出 null。
+- `页码`: 要么第1页，要么第2页，无法判断则填"1"
+**輸出格式（中文為繁體）**（只輸出 JSON）：
+{
+ "生產日期": "yyyy-mm-dd",
+ "班別": "白班" | "晚班" | null,
+ "品名": "Y20 Housing" | "X3784 Housing" | null,
+ "製程": "時效" | "鍛壓" | "固熔" | null,
+ "页码": "1" | "2" ,
+}"""
 #endregion
 
 
@@ -149,7 +165,7 @@ def extract_info(key, user_input):
     Returns:
         dict: 提取出的信息字典，失败时返回 None
     """
-    # 1. 选择系统提示词
+    # 1. 选择系统提示词：冲压默认 SYSTEM_PROMPT_1（时效/固熔）；仅製程为鍛壓时再走 SYSTEM_PROMPT_鍛壓 取页码
     if key == "沖壓":
         system_prompt = SYSTEM_PROMPT_1
     elif key == "金加":
@@ -166,9 +182,24 @@ def extract_info(key, user_input):
         # 尝试解析 JSON
         try:
             result_json = json.loads(result_text)
-            # 防止LLM任务失败
-            if result_json["製程"] == "CNC0 全檢":
-                del result_json["抽檢位置"]
+            if key == "金加" and not result_json.get("製程"):
+                result_json["製程"] = "CNC0"
+            if key == "金加" and result_json.get("製程") == "CNC0 全檢":
+                result_json.pop("抽檢位置", None)
+            if key == "沖壓" and result_json.get("製程") == "鍛壓":
+                text_page = _chat_complete(SYSTEM_PROMPT_鍛壓, user_input)
+                if text_page:
+                    try:
+                        page_json = json.loads(text_page)
+                        page_val = page_json.get("页码") or page_json.get("頁碼")
+                        if page_val is not None and str(page_val).strip():
+                            result_json["页码"] = str(page_val).strip()
+                        else:
+                            result_json["页码"] = "1"
+                    except json.JSONDecodeError:
+                        result_json["页码"] = "1"
+                else:
+                    result_json["页码"] = "1"
             return result_json
         except json.JSONDecodeError as e:
             print(f"模型返回内容不是有效 JSON：{result_text}", file=sys.stderr)

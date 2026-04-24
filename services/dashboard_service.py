@@ -27,7 +27,7 @@ KEY_PROCESS_OPTIONS: dict[str, list[str]] = {
     "金加": ["CNC0", "CNC0 全檢"],
 }
 SHIFT_OPTIONS = ["不限", "白班", "晚班"]
-INSPECTION_LOCATION_OPTIONS = ["不限", "製程抽檢", "入庫抽檢"]
+INSPECTION_LOCATION_OPTIONS = ["製程抽檢", "入庫抽檢"]
 PRODUCT_NAME_OPTIONS = ["Y20 Housing", "X3784 Housing"]
 DEFAULT_PRODUCT_NAME = PRODUCT_NAME_OPTIONS[0]
 
@@ -47,12 +47,20 @@ class ParsedDashboardRecord:
     payload: dict[str, Any]
 
 
+def _stmt_match_product_name(model: type, stmt: Any, payload: dict[str, Any]) -> Any:
+    """唯一键中的品名：与 DDL 一致，NULL 与具体值分列。"""
+    pname = payload.get("product_name")
+    if pname is None:
+        return stmt.where(model.product_name.is_(None))
+    return stmt.where(model.product_name == pname)
+
+
 def find_existing_board_row(
     db: Session,
     model: type,
     payload: dict[str, Any],
 ) -> Any | None:
-    """按业务唯一键（生产日期+班别；CNC0 另加抽检位置）查一行。"""
+    """按业务唯一键查已有行（均含 production_date + shift + product_name；锻压另加 part；CNC0 另加 inspection_location）。"""
     d = payload["production_date"]
     shift_val = payload.get("shift")
     stmt = select(model).where(model.production_date == d)
@@ -60,6 +68,9 @@ def find_existing_board_row(
         stmt = stmt.where(model.shift.is_(None))
     else:
         stmt = stmt.where(model.shift == shift_val)
+    stmt = _stmt_match_product_name(model, stmt, payload)
+    if model is BoardChongyaDuanya:
+        stmt = stmt.where(model.part == payload.get("part", 1))
     if model is BoardJinjiaCnc0:
         loc = payload.get("inspection_location")
         if loc is None:
@@ -96,8 +107,11 @@ def collect_dashboard_duplicate_conflicts(
                 "existing_task_id": ex.task_id,
                 "existing_ocr_result_id": ex.ocr_result_id,
             }
+            row["product_name"] = p.get("product_name")
             if item.model is BoardJinjiaCnc0:
                 row["inspection_location"] = p.get("inspection_location")
+            if item.model is BoardChongyaDuanya:
+                row["part"] = p.get("part", 1)
             conflicts.append(row)
     return conflicts
 
@@ -208,8 +222,8 @@ def build_dashboard_context(
     process_options = KEY_PROCESS_OPTIONS[selected_key]
     selected_process = process_name if process_name in process_options else process_options[0]
     selected_shift = shift_name if shift_name in SHIFT_OPTIONS else "不限"
-    end_value = _parse_iso_date(end_date) or date.today()
-    start_value = _parse_iso_date(start_date) or (end_value - timedelta(days=29))
+    end_value = parse_iso_date(end_date) or date.today()
+    start_value = parse_iso_date(start_date) or (end_value - timedelta(days=29))
 
     selected_batch = (batch or "").strip() or ""
     selected_line = (line or "").strip() or ""
@@ -296,7 +310,7 @@ def _build_record_from_tables(
     if not model:
         raise ValueError(f"无法识别看板类型：key={key_name}, 製程={process}")
 
-    production_date = _parse_iso_date(summary.get("生產日期"))
+    production_date = parse_iso_date(summary.get("生產日期"))
     if not production_date:
         raise ValueError("缺少有效的 生產日期，无法写入看板表。")
 
@@ -314,35 +328,52 @@ def _build_record_from_tables(
     grid = _table_to_grid(main_table)
 
     if model is BoardChongyaDuanya:
-        print("gird",grid)
         payload = build_duanya_payload(grid)
+        payload["part"] = _summary_page_to_part(summary)
         unique_filter = {
             "key_name": key_name,
             "process_name": process,
+            "production_date": production_date,
+            "shift": summary.get("班別"),
+            "product_name": summary.get("品名"),
+            "part": payload["part"],
         }
     elif model is BoardChongyaGurong:
         payload = build_gurong_payload(grid)
         unique_filter = {
             "key_name": key_name,
             "process_name": process,
+            "production_date": production_date,
+            "shift": summary.get("班別"),
+            "product_name": summary.get("品名"),
         }
     elif model is BoardChongyaShixiao:
         payload = build_shixiao_payload(grid)
         unique_filter = {
             "key_name": key_name,
             "process_name": process,
+            "production_date": production_date,
+            "shift": summary.get("班別"),
+            "product_name": summary.get("品名"),
         }
     elif model is BoardJinjiaCnc0:
         payload = build_cnc0_payload(grid)
         unique_filter = {
             "key_name": key_name,
             "process_name": process,
+            "production_date": production_date,
+            "shift": summary.get("班別"),
+            "product_name": summary.get("品名"),
+            "inspection_location": summary.get("抽檢位置"),
         }
     else:
         payload = build_cnc0_full_payload(grid)
         unique_filter = {
             "key_name": key_name,
             "process_name": process,
+            "production_date": production_date,
+            "shift": summary.get("班別"),
+            "product_name": summary.get("品名"),
         }
 
     return ParsedDashboardRecord(
@@ -353,686 +384,218 @@ def _build_record_from_tables(
 
 
 def build_duanya_payload(grid: list[list[str]]) -> dict[str, Any]:
-    """锻压数据解析函数，统一处理所有字段类型和良率计算"""
-    
-    # 列索引：data_cols列对应数据
+    """锻压数据解析函数：提取批次/线别/投入/良品/不良 与 9 类不良数。"""
+
     data_cols = [3, 5, 7, 9]  # 对应 _1, _2, _3, _4
-    
-    # 提取各系列数据
-    # 原材批次
+
     batch_vals = [gird_extract_value(grid, 1, col) for col in data_cols]
-    # 線別/模號
-    line_vals = [gird_extract_value(grid, 2, col) if gird_extract_value(grid, 2, col) !=  "線 模" else None for col in data_cols] #前面_table_to_grid得到gird时去掉了首位空白
-    # 投入数，良品数，不良数
-    input_vals = [int(gird_extract_value(grid, 3, col)) if gird_extract_value(grid, 3, col) is not None else None for col in data_cols]
+    # 線別/模號；前面 _table_to_grid 拼接首列后会带"線 模"占位，剔除
+    line_vals = [
+        gird_extract_value(grid, 2, col) if gird_extract_value(grid, 2, col) != "線 模" else None
+        for col in data_cols
+    ]
+
+    input_vals = [
+        int(gird_extract_value(grid, 3, col)) if gird_extract_value(grid, 3, col) is not None else None
+        for col in data_cols
+    ]
     input_total = sum(val for val in input_vals if val is not None)
-    good_vals = [int(gird_extract_value(grid, 4, col)) if gird_extract_value(grid, 4, col) is not None else None for col in data_cols]
+    good_vals = [
+        int(gird_extract_value(grid, 4, col)) if gird_extract_value(grid, 4, col) is not None else None
+        for col in data_cols
+    ]
     good_total = sum(val for val in good_vals if val is not None)
-    bad_vals = [int(gird_extract_value(grid, 5, col)) if gird_extract_value(grid, 5, col) is not None else None for col in data_cols]
-    bad_total =  sum(val for val in bad_vals if val is not None)
-    # 实际良率
-    actual_yield_vals = [None]*4
-    for i in range(0,4):
-        if good_vals[i] is not None and input_vals[i] is not None:
-            actual_yield_vals[i] = round((good_vals[i] / input_vals[i])*100,2)
-        else: actual_yield_vals[i] = None
-    actual_yield_total = round((good_total / input_total)*100,2)
+    bad_vals = [
+        int(gird_extract_value(grid, 5, col)) if gird_extract_value(grid, 5, col) is not None else None
+        for col in data_cols
+    ]
+    bad_total = sum(val for val in bad_vals if val is not None)
+    actual_yield_total = round((good_total / input_total) * 100, 2) if input_total else None
 
-    #region 具体不良类型数目,9-17行
-    # 不良类型1,5.0+1.0/-0.3偏小
-    defect_type_1_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 9, col) is not None:
-            defect_type_1_num_val[i] = int(gird_extract_value(grid, 9, col))
-        elif input_vals[i] is not None:
-            defect_type_1_num_val[i] = 0
-        else:
-            defect_type_1_num_val[i] = None
-    defect_type_1_num_total = sum(val for val in defect_type_1_num_val if val is not None)
-    defect_type_1_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_1_num_val[i] is not None:
-            defect_type_1_rate_val[i] = round((defect_type_1_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_1_num_val[i] == 0:
-            defect_type_1_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_1_rate_val[i] = None
-    defect_type_1_rate_total = round((defect_type_1_num_total / input_total)*100,2)
+    # 9 类不良数据：数据行从 grid 第 9 行开始，依次对应 DUANYA_DEFECT_TYPES 顺序
+    defect_rows = [9, 10, 11, 12, 13, 14, 15, 16, 17]
+    defect_keys = [prefix for prefix, _ in DUANYA_DEFECT_TYPES]
 
-    # 不良类型2,50+12/-3偏小
-    defect_type_2_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 10, col) is not None:
-            defect_type_2_num_val[i] = int(gird_extract_value(grid, 10, col))
-        elif input_vals[i] is not None:
-            defect_type_2_num_val[i] = 0
-        else:
-            defect_type_2_num_val[i] = None
-    defect_type_2_num_total = sum(val for val in defect_type_2_num_val if val is not None)
-    defect_type_2_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_2_num_val[i] is not None:
-            defect_type_2_rate_val[i] = round((defect_type_2_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_2_num_val[i] == 0:
-            defect_type_2_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_2_rate_val[i] = None
-    defect_type_2_rate_total = round((defect_type_2_num_total / input_total)*100,2)
-
-    # 不良类型3,50+12/-3偏大
-    defect_type_3_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 11, col) is not None:
-            defect_type_3_num_val[i] = int(gird_extract_value(grid, 11, col))
-        elif input_vals[i] is not None:
-            defect_type_3_num_val[i] = 0
-        else:
-            defect_type_3_num_val[i] = None
-    defect_type_3_num_total = sum(val for val in defect_type_3_num_val if val is not None)
-    defect_type_3_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_3_num_val[i] is not None:
-            defect_type_3_rate_val[i] = round((defect_type_3_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_3_num_val[i] == 0:
-            defect_type_3_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_3_rate_val[i] = None
-    defect_type_3_rate_total = round((defect_type_3_num_total / input_total)*100,2)
-
-    # 不良类型4,垂直度0.40偏大
-    defect_type_4_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 12, col) is not None:
-            defect_type_4_num_val[i] = int(gird_extract_value(grid, 12, col))
-        elif input_vals[i] is not None:
-            defect_type_4_num_val[i] = 0
-        else:
-            defect_type_4_num_val[i] = None
-    defect_type_4_num_total = sum(val for val in defect_type_4_num_val if val is not None)
-    defect_type_4_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_4_num_val[i] is not None:
-            defect_type_4_rate_val[i] = round((defect_type_4_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_4_num_val[i] == 0:
-            defect_type_4_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_4_rate_val[i] = None
-    defect_type_4_rate_total = round((defect_type_4_num_total / input_total)*100,2)
-
-    # 不良类型5,垂直度0.70偏大
-    defect_type_5_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 13, col) is not None:
-            defect_type_5_num_val[i] = int(gird_extract_value(grid, 13, col))
-        elif input_vals[i] is not None:
-            defect_type_5_num_val[i] = 0
-        else:
-            defect_type_5_num_val[i] = None
-    defect_type_5_num_total = sum(val for val in defect_type_5_num_val if val is not None)
-    defect_type_5_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_5_num_val[i] is not None:
-            defect_type_5_rate_val[i] = round((defect_type_5_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_5_num_val[i] == 0:
-            defect_type_5_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_5_rate_val[i] = None
-    defect_type_5_rate_total = round((defect_type_5_num_total / input_total)*100,2)
-
-    # 不良类型6,4.20+/-0.30￨P1-P3￨＜0.2偏大
-    defect_type_6_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 14, col) is not None:
-            defect_type_6_num_val[i] = int(gird_extract_value(grid, 14, col))
-        elif input_vals[i] is not None:
-            defect_type_6_num_val[i] = 0
-        else:
-            defect_type_6_num_val[i] = None
-    defect_type_6_num_total = sum(val for val in defect_type_6_num_val if val is not None)
-    defect_type_6_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_6_num_val[i] is not None:
-            defect_type_6_rate_val[i] = round((defect_type_6_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_6_num_val[i] == 0:
-            defect_type_6_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_6_rate_val[i] = None
-    defect_type_6_rate_total = round((defect_type_6_num_total / input_total)*100,2)
-
-    # 不良类型7,4.20+/-0.30￨P2-P4￨＜0.2偏大
-    defect_type_7_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 15, col) is not None:
-            defect_type_7_num_val[i] = int(gird_extract_value(grid, 15, col))
-        elif input_vals[i] is not None:
-            defect_type_7_num_val[i] = 0
-        else:
-            defect_type_7_num_val[i] = None
-    defect_type_7_num_total = sum(val for val in defect_type_7_num_val if val is not None)
-    defect_type_7_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_7_num_val[i] is not None:
-            defect_type_7_rate_val[i] = round((defect_type_7_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_7_num_val[i] == 0:
-            defect_type_7_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_7_rate_val[i] = None
-    defect_type_7_rate_total = round((defect_type_7_num_total / input_total)*100,2)
-
-    # 不良类型8,2D碼偏位
-    defect_type_8_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 16, col) is not None:
-            defect_type_8_num_val[i] = int(gird_extract_value(grid, 16, col))
-        elif input_vals[i] is not None:
-            defect_type_8_num_val[i] = 0
-        else:
-            defect_type_8_num_val[i] = None
-    defect_type_8_num_total = sum(val for val in defect_type_8_num_val if val is not None)
-    defect_type_8_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_8_num_val[i] is not None:
-            defect_type_8_rate_val[i] = round((defect_type_8_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_8_num_val[i] == 0:
-            defect_type_8_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_8_rate_val[i] = None
-    defect_type_8_rate_total = round((defect_type_8_num_total / input_total)*100,2)
-
-    # 不良类型9,DDS
-    defect_type_9_num_val = [None]*4
-    for i in range(0,4):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 17, col) is not None:
-            defect_type_9_num_val[i] = int(gird_extract_value(grid, 17, col))
-        elif input_vals[i] is not None:
-            defect_type_9_num_val[i] = 0
-        else:
-            defect_type_9_num_val[i] = None
-    defect_type_9_num_total = sum(val for val in defect_type_9_num_val if val is not None)
-    defect_type_9_rate_val = [None]*4
-    for i in range(0,4):
-        if input_vals[i] is not None and defect_type_9_num_val[i] is not None:
-            defect_type_9_rate_val[i] = round((defect_type_9_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_9_num_val[i] == 0:
-            defect_type_9_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_9_rate_val[i] = None
-    defect_type_9_rate_total = round((defect_type_9_num_total / input_total)*100,2)
-    #endregion
-
-    # 构建基础字段
-    payload = {
-        # 批次和线别
+    payload: dict[str, Any] = {
         "batch_1": batch_vals[0], "batch_2": batch_vals[1], "batch_3": batch_vals[2], "batch_4": batch_vals[3],
         "line_1": line_vals[0], "line_2": line_vals[1], "line_3": line_vals[2], "line_4": line_vals[3],
-        
-        # 投入数（字符串）
         "input_1": input_vals[0], "input_2": input_vals[1], "input_3": input_vals[2], "input_4": input_vals[3],
         "input_total": input_total,
-        
-        # 良品数和不良数（整数）
         "good_1": good_vals[0], "good_2": good_vals[1], "good_3": good_vals[2], "good_4": good_vals[3],
         "good_total": good_total,
         "bad_1": bad_vals[0], "bad_2": bad_vals[1], "bad_3": bad_vals[2], "bad_4": bad_vals[3],
         "bad_total": bad_total,
-        
-        # 实际良率（浮点数）
-        "actual_yield_1": actual_yield_vals[0], "actual_yield_2": actual_yield_vals[1],
-        "actual_yield_3": actual_yield_vals[2], "actual_yield_4": actual_yield_vals[3],
         "actual_yield_total": actual_yield_total,
-        
-        # 目标良率（固定值）
-        "target_yield_1": 99.80, "target_yield_2": 99.80, "target_yield_3": 99.80, "target_yield_4": 99.80,
         "target_yield_total": 99.80,
-
-        # 5.0+1.0/-0.3 偏小，数量
-        "_5_0_1_0_0_3_pian_xiao_badnum_1": defect_type_1_num_val[0], "_5_0_1_0_0_3_pian_xiao_badnum_2": defect_type_1_num_val[1],
-        "_5_0_1_0_0_3_pian_xiao_badnum_3": defect_type_1_num_val[2], "_5_0_1_0_0_3_pian_xiao_badnum_4": defect_type_1_num_val[3],
-        "_5_0_1_0_0_3_pian_xiao_badnum_total": defect_type_1_num_total,
-
-        # 5.0+1.0/-0.3 偏小，不良率
-        "_5_0_1_0_0_3_pian_xiao_badrate_1": defect_type_1_rate_val[0], "_5_0_1_0_0_3_pian_xiao_badrate_2": defect_type_1_rate_val[1],
-        "_5_0_1_0_0_3_pian_xiao_badrate_3": defect_type_1_rate_val[2], "_5_0_1_0_0_3_pian_xiao_badrate_4": defect_type_1_rate_val[3],
-        "_5_0_1_0_0_3_pian_xiao_badrate_total": defect_type_1_rate_total,
-
-        # 50+12/-3 偏小，数量
-        "_50_12_3_pian_xiao_badnum_1": defect_type_2_num_val[0], "_50_12_3_pian_xiao_badnum_2": defect_type_2_num_val[1],
-        "_50_12_3_pian_xiao_badnum_3": defect_type_2_num_val[2], "_50_12_3_pian_xiao_badnum_4": defect_type_2_num_val[3],
-        "_50_12_3_pian_xiao_badnum_total": defect_type_2_num_total,
-
-        # 50+12/-3 偏小，不良率
-        "_50_12_3_pian_xiao_badrate_1": defect_type_2_rate_val[0], "_50_12_3_pian_xiao_badrate_2": defect_type_2_rate_val[1],
-        "_50_12_3_pian_xiao_badrate_3": defect_type_2_rate_val[2], "_50_12_3_pian_xiao_badrate_4": defect_type_2_rate_val[3],
-        "_50_12_3_pian_xiao_badrate_total": defect_type_2_rate_total,
-
-        # 50+12/-3 偏大，数量
-        "_50_12_3_pian_da_badnum_1": defect_type_3_num_val[0], "_50_12_3_pian_da_badnum_2": defect_type_3_num_val[1],
-        "_50_12_3_pian_da_badnum_3": defect_type_3_num_val[2], "_50_12_3_pian_da_badnum_4": defect_type_3_num_val[3],
-        "_50_12_3_pian_da_badnum_total": defect_type_3_num_total,
-
-        # 50+12/-3 偏大，不良率
-        "_50_12_3_pian_da_badrate_1": defect_type_3_rate_val[0], "_50_12_3_pian_da_badrate_2": defect_type_3_rate_val[1],
-        "_50_12_3_pian_da_badrate_3": defect_type_3_rate_val[2], "_50_12_3_pian_da_badrate_4": defect_type_3_rate_val[3],
-        "_50_12_3_pian_da_badrate_total": defect_type_3_rate_total,
-
-        # 垂直度 0.40 偏大，数量
-        "chui_zhi_du_0_40_pian_da_badnum_1": defect_type_4_num_val[0], "chui_zhi_du_0_40_pian_da_badnum_2": defect_type_4_num_val[1],
-        "chui_zhi_du_0_40_pian_da_badnum_3": defect_type_4_num_val[2], "chui_zhi_du_0_40_pian_da_badnum_4": defect_type_4_num_val[3],
-        "chui_zhi_du_0_40_pian_da_badnum_total": defect_type_4_num_total,
-
-        # 垂直度 0.40 偏大，不良率
-        "chui_zhi_du_0_40_pian_da_badrate_1": defect_type_4_rate_val[0], "chui_zhi_du_0_40_pian_da_badrate_2": defect_type_4_rate_val[1],
-        "chui_zhi_du_0_40_pian_da_badrate_3": defect_type_4_rate_val[2], "chui_zhi_du_0_40_pian_da_badrate_4": defect_type_4_rate_val[3],
-        "chui_zhi_du_0_40_pian_da_badrate_total": defect_type_4_rate_total,
-
-        # 垂直度 0.70 偏大，数量
-        "chui_zhi_du_0_70_pian_da_badnum_1": defect_type_5_num_val[0], "chui_zhi_du_0_70_pian_da_badnum_2": defect_type_5_num_val[1],
-        "chui_zhi_du_0_70_pian_da_badnum_3": defect_type_5_num_val[2], "chui_zhi_du_0_70_pian_da_badnum_4": defect_type_5_num_val[3],
-        "chui_zhi_du_0_70_pian_da_badnum_total": defect_type_5_num_total,
-
-        # 垂直度 0.70 偏大，不良率
-        "chui_zhi_du_0_70_pian_da_badrate_1": defect_type_5_rate_val[0], "chui_zhi_du_0_70_pian_da_badrate_2": defect_type_5_rate_val[1],
-        "chui_zhi_du_0_70_pian_da_badrate_3": defect_type_5_rate_val[2], "chui_zhi_du_0_70_pian_da_badrate_4": defect_type_5_rate_val[3],
-        "chui_zhi_du_0_70_pian_da_badrate_total": defect_type_5_rate_total,
-
-        # 4.20+/-0.30∣P1-P3∣＜0.2 偏大，数量
-        "_4_20_0_30_P1_P3_0_2_pian_da_badnum_1": defect_type_6_num_val[0], "_4_20_0_30_P1_P3_0_2_pian_da_badnum_2": defect_type_6_num_val[1],
-        "_4_20_0_30_P1_P3_0_2_pian_da_badnum_3": defect_type_6_num_val[2], "_4_20_0_30_P1_P3_0_2_pian_da_badnum_4": defect_type_6_num_val[3],
-        "_4_20_0_30_P1_P3_0_2_pian_da_badnum_total": defect_type_6_num_total,
-
-        # 4.20+/-0.30∣P1-P3∣＜0.2 偏大，不良率
-        "_4_20_0_30_P1_P3_0_2_pian_da_badrate_1": defect_type_6_rate_val[0], "_4_20_0_30_P1_P3_0_2_pian_da_badrate_2": defect_type_6_rate_val[1],
-        "_4_20_0_30_P1_P3_0_2_pian_da_badrate_3": defect_type_6_rate_val[2], "_4_20_0_30_P1_P3_0_2_pian_da_badrate_4": defect_type_6_rate_val[3],
-        "_4_20_0_30_P1_P3_0_2_pian_da_badrate_total": defect_type_6_rate_total,
-
-        # 4.20+/-0.30∣P2-P4∣＜0.2 偏大，数量
-        "_4_20_0_30_P2_P4_0_2_pian_da_badnum_1": defect_type_7_num_val[0], "_4_20_0_30_P2_P4_0_2_pian_da_badnum_2": defect_type_7_num_val[1],
-        "_4_20_0_30_P2_P4_0_2_pian_da_badnum_3": defect_type_7_num_val[2], "_4_20_0_30_P2_P4_0_2_pian_da_badnum_4": defect_type_7_num_val[3],
-        "_4_20_0_30_P2_P4_0_2_pian_da_badnum_total": defect_type_7_num_total,
-
-        # 4.20+/-0.30∣P2-P4∣＜0.2 偏大，不良率
-        "_4_20_0_30_P2_P4_0_2_pian_da_badrate_1": defect_type_7_rate_val[0], "_4_20_0_30_P2_P4_0_2_pian_da_badrate_2": defect_type_7_rate_val[1],
-        "_4_20_0_30_P2_P4_0_2_pian_da_badrate_3": defect_type_7_rate_val[2], "_4_20_0_30_P2_P4_0_2_pian_da_badrate_4": defect_type_7_rate_val[3],
-        "_4_20_0_30_P2_P4_0_2_pian_da_badrate_total": defect_type_7_rate_total,
-
-        # 2D 碼偏位，数量
-        "_2D_ma_pian_wei_badnum_1": defect_type_8_num_val[0], "_2D_ma_pian_wei_badnum_2": defect_type_8_num_val[1],
-        "_2D_ma_pian_wei_badnum_3": defect_type_8_num_val[2], "_2D_ma_pian_wei_badnum_4": defect_type_8_num_val[3],
-        "_2D_ma_pian_wei_badnum_total": defect_type_8_num_total,
-
-        # 2D 碼偏位，不良率
-        "_2D_ma_pian_wei_badrate_1": defect_type_8_rate_val[0], "_2D_ma_pian_wei_badrate_2": defect_type_8_rate_val[1],
-        "_2D_ma_pian_wei_badrate_3": defect_type_8_rate_val[2], "_2D_ma_pian_wei_badrate_4": defect_type_8_rate_val[3],
-        "_2D_ma_pian_wei_badrate_total": defect_type_8_rate_total,
-
-        # DDS,数量
-        "DDS_badnum_1": defect_type_9_num_val[0], "DDS_badnum_2": defect_type_9_num_val[1],
-        "DDS_badnum_3": defect_type_9_num_val[2], "DDS_badnum_4": defect_type_9_num_val[3],
-        "DDS_badnum_total": defect_type_9_num_total,
-
-        # DDS,不良率
-        "DDS_badrate_1": defect_type_9_rate_val[0], "DDS_badrate_2": defect_type_9_rate_val[1],
-        "DDS_badrate_3": defect_type_9_rate_val[2], "DDS_badrate_4": defect_type_9_rate_val[3],
-        "DDS_badrate_total": defect_type_9_rate_total,
-
     }
-    
+
+    for prefix, row_idx in zip(defect_keys, defect_rows):
+        col_nums: list[int | None] = []
+        for i in range(4):
+            cell = gird_extract_value(grid, row_idx, data_cols[i])
+            if input_vals[i] is None:
+                col_nums.append(None)
+            else:
+                col_nums.append(int(cell) if cell is not None else 0)
+        total_num = sum(v for v in col_nums if v is not None)
+        payload[f"{prefix}_badnum_1"] = col_nums[0]
+        payload[f"{prefix}_badnum_2"] = col_nums[1]
+        payload[f"{prefix}_badnum_3"] = col_nums[2]
+        payload[f"{prefix}_badnum_4"] = col_nums[3]
+        payload[f"{prefix}_badnum_total"] = total_num
+
     return payload
 
 
 def build_gurong_payload(grid: list[list[str]]) -> dict[str, Any]:
-    """固熔数据解析函数，统一处理所有字段类型和良率计算"""
-    # 列索引：data_cols列对应数据
-    data_cols = [3, 5, 7]  # 对应 _1, _2, _3
-    # 提取各系列数据
-    # 線別
-    line_vals = []
+    """固熔数据解析函数：3 线体 + 汇总，无原材批次。"""
+    data_cols = [3, 5, 7]
+
+    line_vals: list[str | None] = []
     for col in data_cols:
         val = gird_extract_value(grid, 1, col)
         line_vals.append(val if val is not None and val.strip() != "線" else None)
-    # 投入数，良品数，不良数
-    input_vals = [int(gird_extract_value(grid, 2, col)) if gird_extract_value(grid, 2, col) is not None else None for col in data_cols]
+
+    input_vals = [
+        int(gird_extract_value(grid, 2, col)) if gird_extract_value(grid, 2, col) is not None else None
+        for col in data_cols
+    ]
     input_total = sum(val for val in input_vals if val is not None)
-    good_vals = [int(gird_extract_value(grid, 3, col)) if gird_extract_value(grid, 3, col) is not None else None for col in data_cols]
+    good_vals = [
+        int(gird_extract_value(grid, 3, col)) if gird_extract_value(grid, 3, col) is not None else None
+        for col in data_cols
+    ]
     good_total = sum(val for val in good_vals if val is not None)
-    bad_vals = [int(gird_extract_value(grid, 4, col)) if gird_extract_value(grid, 4, col) is not None else None for col in data_cols]
-    bad_total =  sum(val for val in bad_vals if val is not None)
-    # 实际良率
-    actual_yield_vals = [None]*3
-    for i in range(0,3):
-        if good_vals[i] is not None and input_vals[i] is not None:
-            actual_yield_vals[i] = round((good_vals[i] / input_vals[i])*100,2)
-        else: actual_yield_vals[i] = None
-    actual_yield_total = round((good_total / input_total)*100,2)
+    bad_vals = [
+        int(gird_extract_value(grid, 4, col)) if gird_extract_value(grid, 4, col) is not None else None
+        for col in data_cols
+    ]
+    bad_total = sum(val for val in bad_vals if val is not None)
+    actual_yield_total = round((good_total / input_total) * 100, 2) if input_total else None
 
-    #region 具体不良类型数目,8-10行
-    # 不良类型1,硬度40≤Hba≤60偏大
-    defect_type_1_num_val = [None]*3
-    for i in range(0,3):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 8, col) is not None:
-            defect_type_1_num_val[i] = int(gird_extract_value(grid, 8, col))
-        elif input_vals[i] is not None:
-            defect_type_1_num_val[i] = 0
-        else:
-            defect_type_1_num_val[i] = None
-    defect_type_1_num_total = sum(val for val in defect_type_1_num_val if val is not None)
-    defect_type_1_rate_val = [None]*3
-    for i in range(0,3):
-        if input_vals[i] is not None and defect_type_1_num_val[i] is not None:
-            defect_type_1_rate_val[i] = round((defect_type_1_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_1_num_val[i] == 0:
-            defect_type_1_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_1_rate_val[i] = None
-    defect_type_1_rate_total = round((defect_type_1_num_total / input_total)*100,2)
+    defect_rows = [8, 9, 10]
+    defect_keys = [prefix for prefix, _ in GURONG_DEFECT_TYPES]
 
-    # 不良类型2,變形
-    defect_type_2_num_val = [None]*3
-    for i in range(0,3):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 9, col) is not None:
-            defect_type_2_num_val[i] = int(gird_extract_value(grid, 9, col))
-        elif input_vals[i] is not None:
-            defect_type_2_num_val[i] = 0
-        else:
-            defect_type_2_num_val[i] = None
-    defect_type_2_num_total = sum(val for val in defect_type_2_num_val if val is not None)
-    defect_type_2_rate_val = [None]*3
-    for i in range(0,3):
-        if input_vals[i] is not None and defect_type_2_num_val[i] is not None:
-            defect_type_2_rate_val[i] = round((defect_type_2_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_2_num_val[i] == 0:
-            defect_type_2_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_2_rate_val[i] = None
-    defect_type_2_rate_total = round((defect_type_2_num_total / input_total)*100,2)
-
-    # 不良类型3,DDS
-    defect_type_3_num_val = [None]*3
-    for i in range(0,3):
-        col = data_cols[i]
-        if input_vals[i] is not None and gird_extract_value(grid, 10, col) is not None:
-            defect_type_3_num_val[i] = int(gird_extract_value(grid, 10, col))
-        elif input_vals[i] is not None:
-            defect_type_3_num_val[i] = 0
-        else:
-            defect_type_3_num_val[i] = None
-    defect_type_3_num_total = sum(val for val in defect_type_3_num_val if val is not None)
-    defect_type_3_rate_val = [None]*3
-    for i in range(0,3):
-        if input_vals[i] is not None and defect_type_3_num_val[i] is not None:
-            defect_type_3_rate_val[i] = round((defect_type_3_num_val[i] / input_vals[i])*100,2)
-        elif input_vals[i] is not None and defect_type_3_num_val[i] == 0:
-            defect_type_3_rate_val[i] = 0
-        elif input_vals[i] is None:
-            defect_type_3_rate_val[i] = None
-    defect_type_3_rate_total = round((defect_type_3_num_total / input_total)*100,2)
-    #endregion
-
-    payload = {
-    # 线别
-    "line_1": line_vals[0], "line_2": line_vals[1], "line_3": line_vals[2],
-    
-    # 投入数
-    "input_1": input_vals[0], "input_2": input_vals[1], "input_3": input_vals[2],
-    "input_total": input_total,
-    
-    # 良品数和不良数
-    "good_1": good_vals[0], "good_2": good_vals[1], "good_3": good_vals[2],
-    "good_total": good_total,
-    "bad_1": bad_vals[0], "bad_2": bad_vals[1], "bad_3": bad_vals[2],
-    "bad_total": bad_total,
-    
-    # 实际良率
-    "actual_yield_1": actual_yield_vals[0], "actual_yield_2": actual_yield_vals[1], "actual_yield_3": actual_yield_vals[2],
-    "actual_yield_total": actual_yield_total,
-    
-    # 目标良率（固定值）
-    "target_yield_1": 100.00, "target_yield_2": 100.00, "target_yield_3": 100.00,
-    "target_yield_total": 100.00,
-    
-    # 硬度 40≤Hba≤60 偏大，数量
-    "ying_du_40_Hba_60_pian_da_badnum_1": defect_type_1_num_val[0], "ying_du_40_Hba_60_pian_da_badnum_2": defect_type_1_num_val[1], "ying_du_40_Hba_60_pian_da_badnum_3": defect_type_1_num_val[2],
-    "ying_du_40_Hba_60_pian_da_badnum_total": defect_type_1_num_total,
-    
-    # 硬度 40≤Hba≤60 偏大，不良率
-    "ying_du_40_Hba_60_pian_da_badrate_1": defect_type_1_rate_val[0], "ying_du_40_Hba_60_pian_da_badrate_2": defect_type_1_rate_val[1], "ying_du_40_Hba_60_pian_da_badrate_3": defect_type_1_rate_val[2],
-    "ying_du_40_Hba_60_pian_da_badrate_total": defect_type_1_rate_total,
-    
-    # 變形，数量
-    "bian_xing_badnum_1": defect_type_2_num_val[0], "bian_xing_badnum_2": defect_type_2_num_val[1], "bian_xing_badnum_3": defect_type_2_num_val[2],
-    "bian_xing_badnum_total": defect_type_2_num_total,
-    
-    # 變形，不良率
-    "bian_xing_badrate_1": defect_type_2_rate_val[0], "bian_xing_badrate_2": defect_type_2_rate_val[1], "bian_xing_badrate_3": defect_type_2_rate_val[2],
-    "bian_xing_badrate_total": defect_type_2_rate_total,
-    
-    # DDS,数量
-    "DDS_badnum_1": defect_type_3_num_val[0], "DDS_badnum_2": defect_type_3_num_val[1], "DDS_badnum_3": defect_type_3_num_val[2],
-    "DDS_badnum_total": defect_type_3_num_total,
-    
-    # DDS,不良率
-    "DDS_badrate_1": defect_type_3_rate_val[0], "DDS_badrate_2": defect_type_3_rate_val[1], "DDS_badrate_3": defect_type_3_rate_val[2],
-    "DDS_badrate_total": defect_type_3_rate_total,
+    payload: dict[str, Any] = {
+        "line_1": line_vals[0], "line_2": line_vals[1], "line_3": line_vals[2],
+        "input_1": input_vals[0], "input_2": input_vals[1], "input_3": input_vals[2],
+        "input_total": input_total,
+        "good_1": good_vals[0], "good_2": good_vals[1], "good_3": good_vals[2],
+        "good_total": good_total,
+        "bad_1": bad_vals[0], "bad_2": bad_vals[1], "bad_3": bad_vals[2],
+        "bad_total": bad_total,
+        "actual_yield_total": actual_yield_total,
+        "target_yield_total": 100.00,
     }
+
+    for prefix, row_idx in zip(defect_keys, defect_rows):
+        col_nums: list[int | None] = []
+        for i in range(3):
+            cell = gird_extract_value(grid, row_idx, data_cols[i])
+            if input_vals[i] is None:
+                col_nums.append(None)
+            else:
+                col_nums.append(int(cell) if cell is not None else 0)
+        total_num = sum(v for v in col_nums if v is not None)
+        payload[f"{prefix}_badnum_1"] = col_nums[0]
+        payload[f"{prefix}_badnum_2"] = col_nums[1]
+        payload[f"{prefix}_badnum_3"] = col_nums[2]
+        payload[f"{prefix}_badnum_total"] = total_num
 
     return payload
 
 
 def build_shixiao_payload(grid: list[list[str]]) -> dict[str, Any]:
-    """时效数据解析函数，统一处理所有字段类型和良率计算"""
-    # 投入数，良品数，不良数
-    input = int(gird_extract_value(grid, 1, 3)) 
-    good = int(gird_extract_value(grid, 2, 3)) 
-    bad = int(gird_extract_value(grid, 3, 3)) if gird_extract_value(grid, 3, 3) is not None else 0 # 应该只有这个会不填吧
-    actual_yield = round((good / input)*100,2)
-     # 不良项目 1，變形
-    defect_type_1_num = int(gird_extract_value(grid, 7, 3)) if (gird_extract_value(grid, 7, 3)) is not None else 0
-    defect_type_1_rate = round((defect_type_1_num / input) * 100, 2) 
-    
-    # 不良项目 2，機械性能送檢
-    defect_type_2_num = int(gird_extract_value(grid, 8, 3)) if (gird_extract_value(grid, 8, 3)) is not None else 0
-    defect_type_2_rate = round((defect_type_2_num / input) * 100, 2) 
-    
-    # 不良项目 3，硬度 Hba≥74 偏小
-    defect_type_3_num = int(gird_extract_value(grid, 9, 3)) if (gird_extract_value(grid, 9, 3)) is not None else 0
-    defect_type_3_rate = round((defect_type_3_num / input) * 100, 2) 
-    
-    # 不良项目 4,DDS
-    defect_type_4_num = int(gird_extract_value(grid, 10, 3)) if (gird_extract_value(grid, 10, 3)) is not None else 0
-    defect_type_4_rate = round((defect_type_4_num / input) * 100, 2) 
-    payload =  {
-        # 基础数据
-        "input": input,
-        "good": good,
-        "bad": bad,
-        "actual_yield": actual_yield,
-        "target_yield": 100.00,  # 时效的目标良率通常是 100%
+    """时效数据解析函数：单列（投入/良品/不良 + 4 类不良数）。"""
+    input_total = _grid_extract_int(grid, 1, 3, default=0)
+    good_total = _grid_extract_int(grid, 2, 3, default=0)
+    bad_total = _grid_extract_int(grid, 3, 3, default=0)
+    actual_yield_total = round((good_total / input_total) * 100, 2) if input_total else None
 
-        # 不良类型数据
-        "bian_xing_badnum_total": defect_type_1_num,
-        "bian_xing_badrate_total": defect_type_1_rate,
-        
-        "ji_xie_xing_neng_song_jian_badnum_total": defect_type_2_num,
-        "ji_xie_xing_neng_song_jian_badrate_total": defect_type_2_rate,
-        
-        "ying_du_Hba_74_pian_xiao_badnum_total": defect_type_3_num,
-        "ying_du_Hba_74_pian_xiao_badrate_total": defect_type_3_rate,
-        
-        "DDS_badnum_total": defect_type_4_num,
-        "DDS_badrate_total": defect_type_4_rate,
+    # 4 类不良：行号 7..10 对应 SHIXIAO_DEFECT_TYPES
+    defect_rows = [7, 8, 9, 10]
+    defect_keys = [prefix for prefix, _ in SHIXIAO_DEFECT_TYPES]
+
+    payload: dict[str, Any] = {
+        "input_total": input_total,
+        "good_total": good_total,
+        "bad_total": bad_total,
+        "actual_yield_total": actual_yield_total,
+        "target_yield_total": 100.00,
     }
+    for prefix, row_idx in zip(defect_keys, defect_rows):
+        cell = gird_extract_value(grid, row_idx, 3)
+        payload[f"{prefix}_badnum_total"] = int(cell) if cell is not None else 0
     return payload
 
 def build_cnc0_payload(grid: list[list[str]]) -> dict[str, Any]:
-    """cnc0 数据解析函数，统一处理所有字段类型和良率计算"""
-    # 投入數，抽檢數，一次良品數，不良數，可重工不良數，不可重工不良數，一次良率，二次良率，一次良率目標，二次良率目標
-    input = int(gird_extract_value(grid, 1, 3)) 
-    sample = int(gird_extract_value(grid, 2, 3)) 
-    first_good = int(gird_extract_value(grid, 3, 3)) 
-    bad_count = int(gird_extract_value(grid, 4, 3)) 
-    reworkable_bad = int(gird_extract_value(grid, 5, 3)) 
-    unreworkable_bad = int(gird_extract_value(grid, 6, 3)) 
-    first_yield = round((first_good / input)*100,2)
-    second_yield = round(((input-unreworkable_bad) / input)*100,2)
-    first_target_yield = 99.70
-    second_target_yield = 100.00
+    """CNC0 数据解析函数：单列基础指标 + 8 类不良（可重工/不可重工 两列）。"""
+    input_total = _grid_extract_int(grid, 1, 3, default=0)
+    sample = _grid_extract_int(grid, 2, 3, default=0)
+    first_good = _grid_extract_int(grid, 3, 3, default=0)
+    bad_total = _grid_extract_int(grid, 4, 3, default=0)
+    reworkable_bad = _grid_extract_int(grid, 5, 3, default=0)
+    unreworkable_bad = _grid_extract_int(grid, 6, 3, default=0)
+    first_yield = round((first_good / input_total) * 100, 2) if input_total else None
+    second_yield = (
+        round(((input_total - unreworkable_bad) / input_total) * 100, 2) if input_total else None
+    )
 
-    #不良类型 1，DDS
-    defect_type_1_reworkable_num = int(gird_extract_value(grid, 12, 3)) if (gird_extract_value(grid, 12, 3)) is not None else 0
-    defect_type_1_unreworkable_num = int(gird_extract_value(grid, 12, 4)) if (gird_extract_value(grid, 12, 4)) is not None else 0
-    defect_type_1_rate = round(((defect_type_1_reworkable_num + defect_type_1_unreworkable_num) / input) * 100, 2) 
-    # 不良类型 2，臺階/過切
-    defect_type_2_reworkable_num = int(gird_extract_value(grid, 13, 3)) if (gird_extract_value(grid, 13, 3)) is not None else 0
-    defect_type_2_unreworkable_num = int(gird_extract_value(grid, 13, 4)) if (gird_extract_value(grid, 13, 4)) is not None else 0
-    defect_type_2_rate = round(((defect_type_2_reworkable_num + defect_type_2_unreworkable_num) / input) * 100, 2) 
-    
-    # 不良类型 3，毛邊/毛刺
-    defect_type_3_reworkable_num = int(gird_extract_value(grid, 14, 3)) if (gird_extract_value(grid, 14, 3)) is not None else 0
-    defect_type_3_unreworkable_num = int(gird_extract_value(grid, 14, 4)) if (gird_extract_value(grid, 14, 4)) is not None else 0
-    defect_type_3_rate = round(((defect_type_3_reworkable_num + defect_type_3_unreworkable_num) / input) * 100, 2) 
-    
-    # 不良类型 4，大平面未見光
-    defect_type_4_reworkable_num = int(gird_extract_value(grid, 15, 3)) if (gird_extract_value(grid, 15, 3)) is not None else 0
-    defect_type_4_unreworkable_num = int(gird_extract_value(grid, 15, 4)) if (gird_extract_value(grid, 15, 4)) is not None else 0
-    defect_type_4_rate = round(((defect_type_4_reworkable_num + defect_type_4_unreworkable_num) / input) * 100, 2) 
-    
-    # 不良类型 5，大平面刀紋/刀痕
-    defect_type_5_reworkable_num = int(gird_extract_value(grid, 16, 3)) if (gird_extract_value(grid, 16, 3)) is not None else 0
-    defect_type_5_unreworkable_num = int(gird_extract_value(grid, 16, 4)) if (gird_extract_value(grid, 16, 4)) is not None else 0
-    defect_type_5_rate = round(((defect_type_5_reworkable_num + defect_type_5_unreworkable_num) / input) * 100, 2) 
-    
-    # 不良类型 6，平面度 0.10 偏大
-    defect_type_6_reworkable_num = int(gird_extract_value(grid, 17, 3)) if (gird_extract_value(grid, 17, 3)) is not None else 0
-    defect_type_6_unreworkable_num = int(gird_extract_value(grid, 17, 4)) if (gird_extract_value(grid, 17, 4)) is not None else 0
-    defect_type_6_rate = round(((defect_type_6_reworkable_num + defect_type_6_unreworkable_num) / input) * 100, 2) 
-    
-    # 不良类型 7，4.70+/-0.10 偏大
-    defect_type_7_reworkable_num = int(gird_extract_value(grid, 18, 3)) if (gird_extract_value(grid, 18, 3)) is not None else 0
-    defect_type_7_unreworkable_num = int(gird_extract_value(grid, 18, 4)) if (gird_extract_value(grid, 18, 4)) is not None else 0
-    defect_type_7_rate = round(((defect_type_7_reworkable_num + defect_type_7_unreworkable_num) / input) * 100, 2) 
-    
-    # 不良类型 8，4.70+/-0.10 偏小
-    defect_type_8_reworkable_num = int(gird_extract_value(grid, 19, 3)) if (gird_extract_value(grid, 19, 3)) is not None else 0
-    defect_type_8_unreworkable_num = int(gird_extract_value(grid, 19, 4)) if (gird_extract_value(grid, 19, 4)) is not None else 0
-    defect_type_8_rate = round(((defect_type_8_reworkable_num + defect_type_8_unreworkable_num) / input) * 100, 2) 
+    defect_rows = [12, 13, 14, 15, 16, 17, 18, 19]
+    defect_keys = [prefix for prefix, _ in CNC0_DEFECT_TYPES]
 
-    payload = {
-        # 基础数据
-        "input": input,
+    payload: dict[str, Any] = {
+        "input_total": input_total,
         "sample": sample,
         "first_good": first_good,
-        "bad_count": bad_count,
+        "bad_total": bad_total,
         "reworkable_bad": reworkable_bad,
         "unreworkable_bad": unreworkable_bad,
         "first_yield": first_yield,
         "second_yield": second_yield,
-        "first_target_yield": first_target_yield,
-        "second_target_yield": second_target_yield,
-
-        # 不良类型数据 - DDS
-        "DDS_badnum_reworkable": defect_type_1_reworkable_num,
-        "DDS_badnum_unreworkable": defect_type_1_unreworkable_num,
-        "DDS_badrate_total": defect_type_1_rate,
-
-        # 不良类型数据 - 臺階/過切
-        "tai_jie_guo_qie_badnum_reworkable": defect_type_2_reworkable_num,
-        "tai_jie_guo_qie_badnum_unreworkable": defect_type_2_unreworkable_num,
-        "tai_jie_guo_qie_badrate_total": defect_type_2_rate,
-
-        # 不良类型数据 - 毛邊/毛刺
-        "mao_bian_mao_ci_badnum_reworkable": defect_type_3_reworkable_num,
-        "mao_bian_mao_ci_badnum_unreworkable": defect_type_3_unreworkable_num,
-        "mao_bian_mao_ci_badrate_total": defect_type_3_rate,
-
-        # 不良类型数据 - 大平面未見光
-        "da_ping_mian_wei_jian_guang_badnum_reworkable": defect_type_4_reworkable_num,
-        "da_ping_mian_wei_jian_guang_badnum_unreworkable": defect_type_4_unreworkable_num,
-        "da_ping_mian_wei_jian_guang_badrate_total": defect_type_4_rate,
-
-        # 不良类型数据 - 大平面刀紋/刀痕
-        "da_ping_mian_dao_wen_dao_hen_badnum_reworkable": defect_type_5_reworkable_num,
-        "da_ping_mian_dao_wen_dao_hen_badnum_unreworkable": defect_type_5_unreworkable_num,
-        "da_ping_mian_dao_wen_dao_hen_badrate_total": defect_type_5_rate,
-
-        # 不良类型数据 - 平面度 0.10 偏大
-        "ping_mian_du_0_10_pian_da_badnum_reworkable": defect_type_6_reworkable_num,
-        "ping_mian_du_0_10_pian_da_badnum_unreworkable": defect_type_6_unreworkable_num,
-        "ping_mian_du_0_10_pian_da_badrate_total": defect_type_6_rate,
-
-        # 不良类型数据 - 4.70+/-0.10 偏大
-        "_4_70_0_10_pian_da_badnum_reworkable": defect_type_7_reworkable_num,
-        "_4_70_0_10_pian_da_badnum_unreworkable": defect_type_7_unreworkable_num,
-        "_4_70_0_10_pian_da_badrate_total": defect_type_7_rate,
-
-        # 不良类型数据 - 4.70+/-0.10 偏小
-        "_4_70_0_10_pian_xiao_badnum_reworkable": defect_type_8_reworkable_num,
-        "_4_70_0_10_pian_xiao_badnum_unreworkable": defect_type_8_unreworkable_num,
-        "_4_70_0_10_pian_xiao_badrate_total": defect_type_8_rate,
+        "first_target_yield": 99.70,
+        "second_target_yield": 100.00,
     }
+
+    for prefix, row_idx in zip(defect_keys, defect_rows):
+        rw_cell = gird_extract_value(grid, row_idx, 3)
+        urw_cell = gird_extract_value(grid, row_idx, 4)
+        payload[f"{prefix}_badnum_reworkable"] = int(rw_cell) if rw_cell is not None else 0
+        payload[f"{prefix}_badnum_unreworkable"] = int(urw_cell) if urw_cell is not None else 0
 
     return payload
 
 
 def build_cnc0_full_payload(grid: list[list[str]]) -> dict[str, Any]:
-    """cnc0 全检 数据解析函数，统一处理所有字段类型和良率计算"""
-    # 投入數，一次良品數，不良數，可重工不良數，不可重工不良數，一次良率，二次良率，一次良率目標,二次良率目標
-    input = int(gird_extract_value(grid, 1, 3)) 
-    first_good = int(gird_extract_value(grid, 2, 3)) 
-    bad_count = int(gird_extract_value(grid, 3, 3)) 
-    reworkable_bad = int(gird_extract_value(grid, 4, 3)) 
-    unreworkable_bad = int(gird_extract_value(grid, 5, 3)) 
-    first_yield = round((first_good / input)*100,2)
-    second_yield = round(((input-unreworkable_bad) / input)*100,2)
-    first_target_yield = 99.90
-    second_target_yield = 100.00
-    
-    #不良类型 1，大平面刀紋/刀痕
-    defect_type_1_num = int(gird_extract_value(grid, 11, 3)) if (gird_extract_value(grid, 11, 3)) is not None else 0
-    defect_type_1_rate = round((defect_type_1_num / input) * 100, 2) 
-    
-    #不良类型 2，毛邊
-    defect_type_2_num = int(gird_extract_value(grid, 12, 3)) if (gird_extract_value(grid, 12, 3)) is not None else 0
-    defect_type_2_rate = round((defect_type_2_num / input) * 100, 2) 
-    
-    #不良类型 3，大平面未見光
-    defect_type_3_num = int(gird_extract_value(grid, 13, 3)) if (gird_extract_value(grid, 13, 3)) is not None else 0
-    defect_type_3_rate = round((defect_type_3_num / input) * 100, 2) 
+    """CNC0 全检 数据解析函数：单列基础指标 + 3 类不良数。"""
+    input_total = _grid_extract_int(grid, 1, 3, default=0)
+    first_good = _grid_extract_int(grid, 2, 3, default=0)
+    bad_total = _grid_extract_int(grid, 3, 3, default=0)
+    reworkable_bad = _grid_extract_int(grid, 4, 3, default=0)
+    unreworkable_bad = _grid_extract_int(grid, 5, 3, default=0)
+    first_yield = round((first_good / input_total) * 100, 2) if input_total else None
+    second_yield = (
+        round(((input_total - unreworkable_bad) / input_total) * 100, 2) if input_total else None
+    )
 
-    payload = {
-        # 基础数据
-        "input": input,
+    defect_rows = [11, 12, 13]
+    defect_keys = [prefix for prefix, _ in CNC0_FULL_DEFECT_TYPES]
+
+    payload: dict[str, Any] = {
+        "input_total": input_total,
         "first_good": first_good,
-        "bad": bad_count,
+        "bad_total": bad_total,
         "reworkable_bad": reworkable_bad,
         "unreworkable_bad": unreworkable_bad,
         "first_yield": first_yield,
         "second_yield": second_yield,
-        "first_target_yield": first_target_yield,
-        "second_target_yield": second_target_yield,
-
-        # 不良类型数据 - 大平面刀紋/刀痕
-        "da_ping_mian_dao_wen_dao_hen_badnum_total": defect_type_1_num,
-        "da_ping_mian_dao_wen_dao_hen_badrate_total": defect_type_1_rate,
-
-        # 不良类型数据 - 毛邊/毛刺（与 board_jinjia_cnc0_full 列名一致）
-        "mao_bian_mao_ci_badnum_total": defect_type_2_num,
-        "mao_bian_mao_ci_badrate_total": defect_type_2_rate,
-
-        # 不良类型数据 - 大平面未見光
-        "da_ping_mian_wei_jian_guang_badnum_total": defect_type_3_num,
-        "da_ping_mian_wei_jian_guang_badrate_total": defect_type_3_rate,
+        "first_target_yield": 99.90,
+        "second_target_yield": 100.00,
     }
+
+    for prefix, row_idx in zip(defect_keys, defect_rows):
+        cell = gird_extract_value(grid, row_idx, 3)
+        payload[f"{prefix}_badnum_total"] = int(cell) if cell is not None else 0
 
     return payload
 
@@ -1126,8 +689,8 @@ def _build_overview(
                 total_input += _to_float(getattr(record, f"input_{idx}", None)) or 0.0
                 total_bad += _to_float(getattr(record, f"bad_{idx}", None)) or 0.0
         else:
-            total_input += _record_input_value(record)
-            total_bad += _record_bad_value(record)
+            total_input += record_input_value(record)
+            total_bad += record_bad_value(record)
     latest_date = records[-1].production_date.isoformat() if records else "-"
     return [
         {"label": "记录数", "value": len(records)},
@@ -1314,8 +877,8 @@ def _build_generic_charts(records: list[Any], process_name: str) -> list[dict[st
 
     for record in records:
         day = record.production_date.isoformat()
-        input_by_date[day] += _record_input_value(record)
-        bad_by_date[day] += _record_bad_value(record)
+        input_by_date[day] += record_input_value(record)
+        bad_by_date[day] += record_bad_value(record)
 
         for prefix, defect_label in defect_defs:
             if is_cnc0:
@@ -1369,8 +932,8 @@ def _build_table_data(
             input_text = _format_number(input_val)
             bad_text = _format_number(bad_val)
         else:
-            input_text = _record_primary_input_text(record)
-            bad_text = _record_primary_bad_text(record)
+            input_text = record_primary_input_text(record)
+            bad_text = record_primary_bad_text(record)
 
         row = [
             record.production_date.isoformat(),
@@ -1381,6 +944,7 @@ def _build_table_data(
             bad_text,
         ]
         if process_name == "鍛壓":
+            row.append(str(getattr(record, "part", 1) or 1))
             if has_col_filter:
                 matched_batches = [getattr(record, f"batch_{idx}", None) for idx in cols]
                 matched_lines = [getattr(record, f"line_{idx}", None) for idx in cols]
@@ -1410,6 +974,7 @@ def _build_table_data(
             ])
         rows.append(row)
     if records and process_name == "鍛壓":
+        headers = headers + ["页码"]
         if has_col_filter:
             headers = headers + ["匹配批次", "匹配線別"]
         else:
@@ -1438,7 +1003,7 @@ def _is_summary_table(table: Tag) -> bool:
     if len(rows) > 4:
         return False
     blob = _compact_text(table.get_text(" ", strip=True))
-    if not re.search(r"(生產日期|班別|品名|製程|抽檢)", blob):
+    if not re.search(r"(生產日期|班別|品名|製程|抽檢|页码|頁碼)", blob):
         return False
     for row in rows:
         cells = row.find_all(["td", "th"])
@@ -1473,6 +1038,20 @@ def _fill_summary_fallbacks(summary: dict[str, str], block_html: str) -> dict[st
         if match:
             result["班別"] = match.group(1)
     return result
+
+
+def _summary_page_to_part(summary: dict[str, str]) -> int:
+    """摘要 页码/頁碼 → 锻压表 part（1 或 2），与 UNIQUE 键一致；缺省或无法解析为 1。"""
+    for k in ("页码", "頁碼"):
+        raw = (summary.get(k) or "").strip()
+        if not raw:
+            continue
+        if raw in ("1", "2"):
+            return int(raw)
+        m = re.search(r"[12]", raw)
+        if m:
+            return int(m.group(0))
+    return 1
 
 
 def _table_to_grid(table: Tag) -> list[list[str]]:
@@ -1522,14 +1101,20 @@ def gird_extract_value(grid: list[list[str]], row_idx: int | None, col_idx: int)
     return value if value else None
 
 
-def _value_or_zero_text(value: Any) -> str:
-    """把 OCR 缺失值统一归一到字符串 '0'。"""
+def _grid_extract_int(grid: list[list[str]], row_idx: int | None, col_idx: int, *, default: int = 0) -> int:
+    """从表格网格安全取整型：空值或非法值返回 default，避免 int(None) 导致验证失败。"""
+    value = gird_extract_value(grid, row_idx, col_idx)
     if value is None:
-        return "0"
-    text = str(value).strip()
+        return default
+    text = str(value).strip().replace(",", "")
     if not text or text in {"-", "—", "NULL", "None"}:
-        return "0"
-    return text
+        return default
+    try:
+        return int(float(text))
+    except ValueError:
+        return default
+
+
 
 
 def infer_dashboard_key_from_markdown(markdown: str | None) -> str | None:
@@ -1624,16 +1209,17 @@ def list_board_records_for_stats(
             stmt = stmt.where(model.production_date <= end_date)
         stmt = stmt.order_by(model.production_date.desc(), model.id.desc())
         for record in db.scalars(stmt).all():
-            out.append(
-                {
-                    "key_name": record.key_name,
-                    "process_name": record.process_name,
-                    "shift": record.shift,
-                    "production_date": record.production_date,
-                    "task_id": record.task_id,
-                    "ocr_result_id": record.ocr_result_id,
-                }
-            )
+            item: dict[str, Any] = {
+                "key_name": record.key_name,
+                "process_name": record.process_name,
+                "shift": record.shift,
+                "production_date": record.production_date,
+                "task_id": record.task_id,
+                "ocr_result_id": record.ocr_result_id,
+            }
+            if model is BoardChongyaDuanya:
+                item["part"] = getattr(record, "part", None)
+            out.append(item)
     out.sort(key=lambda r: (r["production_date"], r["ocr_result_id"]), reverse=True)
     return out[:limit]
 
@@ -1652,7 +1238,7 @@ def _key_from_process(process: str) -> str:
     return "金加"
 
 
-def _parse_iso_date(value: str | None) -> date | None:
+def parse_iso_date(value: str | None) -> date | None:
     if not value:
         return None
     try:
@@ -1699,44 +1285,27 @@ def _chart_spec(chart_id: str, title: str, labels: list[str], datasets: list[dic
     }
 
 
-def _record_input_value(record: Any) -> float:
-    if hasattr(record, "input_total") and record.input_total is not None:
-        v = _to_float(record.input_total)
-        if v is not None:
-            return v
-    v = getattr(record, "input", None)
-    if v is not None:
-        return _to_float(v) or 0.0
-    return _to_float(getattr(record, "input_count", None)) or 0.0
+def record_input_value(record: Any) -> float:
+    """从 board_* ORM 行取 input_total 数值（不存在或非法时返回 0）。"""
+    return _to_float(getattr(record, "input_total", None)) or 0.0
 
 
-def _record_bad_value(record: Any) -> float:
-    if hasattr(record, "bad_total") and record.bad_total is not None:
-        v = _to_float(record.bad_total)
-        if v is not None:
-            return v
-    for attr in ("bad_count", "bad"):
-        v = getattr(record, attr, None)
-        if v is not None:
-            return _to_float(v) or 0.0
-    return 0.0
+def record_bad_value(record: Any) -> float:
+    """从 board_* ORM 行取 bad_total 数值（不存在或非法时返回 0）。"""
+    return _to_float(getattr(record, "bad_total", None)) or 0.0
 
 
-def _record_primary_input_text(record: Any) -> str:
-    if hasattr(record, "input_total") and record.input_total is not None and str(record.input_total).strip() != "":
-        return str(record.input_total)
-    v = getattr(record, "input", None)
-    if v is not None:
-        fv = _to_float(v)
-        return _format_number(fv) if fv is not None else str(v)
-    return getattr(record, "input_count", None) or "-"
+def record_primary_input_text(record: Any) -> str:
+    """input_total 文本展示：None 或空串显示为 '-'。"""
+    val = getattr(record, "input_total", None)
+    if val is None or str(val).strip() == "":
+        return "-"
+    return str(val)
 
 
-def _record_primary_bad_text(record: Any) -> str:
-    if hasattr(record, "bad_total") and record.bad_total is not None and str(record.bad_total).strip() != "":
-        return str(record.bad_total)
-    for attr in ("bad_count", "bad"):
-        v = getattr(record, attr, None)
-        if v is not None:
-            return str(v)
-    return "-"
+def record_primary_bad_text(record: Any) -> str:
+    """bad_total 文本展示：None 或空串显示为 '-'。"""
+    val = getattr(record, "bad_total", None)
+    if val is None or str(val).strip() == "":
+        return "-"
+    return str(val)
