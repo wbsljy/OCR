@@ -76,7 +76,7 @@
             <input type="date" name="end_date" value="{{ end_date }}">
         </label>
         <button type="submit">查询</button>
-        <button type="button" class="btn-secondary" id="dashboard-export-btn" title="按 key、製程、日期、品名导出；金加 CNC0 时含抽检位置。不含班别/批次/线别">导出 Excel</button>
+        <button type="button" class="btn-secondary" id="dashboard-export-btn" title="按 key、製程、班别、日期、品名导出；金加 CNC0 时含抽检位置。不含批次/线别">导出 Excel</button>
     </form>
 </section>
 
@@ -197,6 +197,7 @@ if (window.Chart && Array.isArray(dashboardCharts)) {
         const params = new URLSearchParams();
         params.set("key", fd.get("key") || "");
         params.set("process", fd.get("process") || "");
+        params.set("shift", fd.get("shift") || "");
         params.set("start_date", fd.get("start_date") || "");
         params.set("end_date", fd.get("end_date") || "");
         params.set("production_name", fd.get("production_name") || "");

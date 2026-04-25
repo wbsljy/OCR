@@ -11,7 +11,9 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+# 添加边框
+from openpyxl.styles import Border, Side
+from openpyxl.styles import Alignment
 from services.dashboard_service import (
     CNC0_DEFECT_TYPES,
     CNC0_FULL_DEFECT_TYPES,
@@ -22,6 +24,7 @@ from services.dashboard_service import (
     KEY_PROCESS_OPTIONS,
     PROCESS_MODEL_MAP,
     PRODUCT_NAME_OPTIONS,
+    SHIFT_OPTIONS,
     SHIXIAO_DEFECT_TYPES,
     parse_iso_date,
 )
@@ -38,7 +41,7 @@ from openpyxl.drawing.text import (
 from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
 
 
-def _finalize_dashboard_rate_chart(bar: BarChart, ws: Any) -> None:
+def _finalize_dashboard_rate_chart(final_data: pd.DataFrame,bar: BarChart, ws: Any) -> None:
     """缩小绘图区、略增大表上图表占位，减轻标题/坐标轴/底部图例在 Excel 中重叠。"""
     bar.layout = Layout(
         manualLayout=ManualLayout(
@@ -55,7 +58,7 @@ def _finalize_dashboard_rate_chart(bar: BarChart, ws: Any) -> None:
     )
     bar.anchor = TwoCellAnchor(
         _from=AnchorMarker(col=0, colOff=0, row=1, rowOff=0),
-        to=AnchorMarker(col=10, colOff=0, row=10, rowOff=0),
+        to=AnchorMarker(col=len(final_data.columns)+1, colOff=0, row=10, rowOff=0),
     )
     ws.add_chart(bar)
 
@@ -75,6 +78,7 @@ def fetch_dashboard_records_for_export(
     end_date: str | None,
     production_name: str | None = None,
     inspection_location: str | None = None,
+    shift_name: str | None = None,
 ) -> tuple[str, str, date, date, pd.DataFrame]:
     selected_key = key_name if key_name in KEY_PROCESS_OPTIONS else "沖壓"
     process_options = KEY_PROCESS_OPTIONS[selected_key]
@@ -96,6 +100,7 @@ def fetch_dashboard_records_for_export(
         if inspection_location in INSPECTION_LOCATION_OPTIONS
         else "不限"
     )
+    selected_shift = shift_name if shift_name in SHIFT_OPTIONS else "不限"
 
     model = PROCESS_MODEL_MAP[pair]
     stmt = (
@@ -107,6 +112,8 @@ def fetch_dashboard_records_for_export(
         )
         .order_by(model.production_date.asc())
     )
+    if selected_shift != "不限":
+        stmt = stmt.where(model.shift == selected_shift)
     if selected_process == "CNC0" :
         stmt = stmt.where(model.inspection_location == selected_inspection_location)
     df = pd.read_sql(stmt, db.get_bind())
@@ -261,7 +268,8 @@ def add_native_good_rate_chart_choya(ws, final_data: pd.DataFrame, anchor: str =
         line.series[1].graphicalProperties.line.solidFill = "D9534F"
         line.series[1].graphicalProperties.line.width = 19050  # 1.5pt
         line.series[1].graphicalProperties.line.dashStyle = "sysDot"
-        line.series[1].marker.symbol = "none"
+        line.series[1].marker.symbol = "triangle"
+        line.series[1].marker.size = 5
         line.series[1].dLbls = DataLabelList()
         line.series[1].dLbls.showVal = False
         line.series[1].dLbls.showSerName = False
@@ -289,11 +297,11 @@ def add_native_good_rate_chart_choya(ws, final_data: pd.DataFrame, anchor: str =
     bar += line
     bar.legend.position = "b"
     bar.legend.txPr = _text_props(7.5)
-    _finalize_dashboard_rate_chart(bar, ws)
+    _finalize_dashboard_rate_chart(final_data,bar, ws)
 
 def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, anchor: str = "A2") -> None:
     """
-    使用 openpyxl 原生图表生成组合图（汇总柱状 + 日趋势折线 + 目标线）。
+    openpyxl 组合图：双柱（一次/二次年或月汇总）+ 四线（两次日趋势 + 两项目标良率）。
     """
     def _text_props(size_pt: float) -> RichText:
         size = int(size_pt * 100)
@@ -311,54 +319,71 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
     if not date_labels:
         return
 
-    total_rate_values = [_rate_to_float(v) for v in final_data.iloc[7][1:].tolist()]
-    if not total_rate_values:
+    first_target_values = [_rate_to_float(v) for v in final_data.iloc[2][1:].tolist()]
+    second_target_values = [_rate_to_float(v) for v in final_data.iloc[3][1:].tolist()]
+    first_rate_values = [_rate_to_float(v) for v in final_data.iloc[7][1:].tolist()]
+    second_rate_values = [_rate_to_float(v) for v in final_data.iloc[8][1:].tolist()]
+    n = len(date_labels)
+    if (
+        not first_rate_values
+        or len(first_rate_values) != n
+        or len(second_rate_values) != n
+        or len(first_target_values) != n
+        or len(second_target_values) != n
+    ):
         return
 
-    # 查找日数据分界：例如 04/21 视为日趋势部分
     split_index = next((i for i, label in enumerate(date_labels) if "/" in label), len(date_labels))
     if split_index == 0:
         split_index = len(date_labels)
 
-    target_values = [0.9990] * len(total_rate_values)
-    summary_values = [
-        total_rate_values[i] if i < split_index else None for i in range(len(total_rate_values))
-    ]
-    daily_values = [
-        total_rate_values[i] if i >= split_index else None for i in range(len(total_rate_values))
-    ]
+    summary_first = [first_rate_values[i] if i < split_index else None for i in range(n)]
+    summary_second = [second_rate_values[i] if i < split_index else None for i in range(n)]
+    daily_first = [first_rate_values[i] if i >= split_index else None for i in range(n)]
+    daily_second = [second_rate_values[i] if i >= split_index else None for i in range(n)]
 
-    # 在右侧隐藏区域准备图表数据源，避免影响主展示区域
-    helper_col = 70  # BR 列附近
+    helper_col = 70
     ws.cell(row=2, column=helper_col, value="序列")
     ws.cell(row=2, column=helper_col + 1, value="日期")
-    ws.cell(row=3, column=helper_col, value="年/月汇总")
-    ws.cell(row=4, column=helper_col, value="日良率趋势")
-    ws.cell(row=5, column=helper_col, value="目标良率")
+    ws.cell(row=3, column=helper_col, value="一次年/月汇总")
+    ws.cell(row=4, column=helper_col, value="二次年/月汇总")
+    ws.cell(row=5, column=helper_col, value="一次日趋势")
+    ws.cell(row=6, column=helper_col, value="二次日趋势")
+    ws.cell(row=7, column=helper_col, value="一次目標良率")
+    ws.cell(row=8, column=helper_col, value="二次目標良率")
 
-    for idx, (label, summary, daily, target) in enumerate(
-        zip(date_labels, summary_values, daily_values, target_values)
+    for idx, row_vals in enumerate(
+        zip(
+            date_labels,
+            summary_first,
+            summary_second,
+            daily_first,
+            daily_second,
+            first_target_values,
+            second_target_values,
+        )
     ):
+        label, s1, s2, d1, d2, t1, t2 = row_vals
         col = helper_col + 1 + idx
         ws.cell(row=2, column=col, value=label)
-        ws.cell(row=3, column=col, value=summary)
-        ws.cell(row=4, column=col, value=daily)
-        ws.cell(row=5, column=col, value=target)
-        ws.cell(row=3, column=col).number_format = "0.00%"
-        ws.cell(row=4, column=col).number_format = "0.00%"
-        ws.cell(row=5, column=col).number_format = "0.00%"
+        ws.cell(row=3, column=col, value=s1)
+        ws.cell(row=4, column=col, value=s2)
+        ws.cell(row=5, column=col, value=d1)
+        ws.cell(row=6, column=col, value=d2)
+        ws.cell(row=7, column=col, value=t1)
+        ws.cell(row=8, column=col, value=t2)
+        for r in range(3, 9):
+            ws.cell(row=r, column=col).number_format = "0.00%"
 
     end_col = helper_col + len(date_labels)
     cats = Reference(ws, min_col=helper_col + 1, max_col=end_col, min_row=2, max_row=2)
 
-    # 柱状图：年/月汇总
     bar = BarChart()
-    bar.title = "总良率趋势图"
+    bar.title = "一次/二次良率趋势图"
     bar.type = "col"
     bar.style = 10
-    bar.y_axis.title = "总良率"
+    bar.y_axis.title = "良率"
     bar.x_axis.title = "日期"
-    # 尺寸将由 TwoCellAnchor 控制，这里仅给默认值
     bar.height = 5.0
     bar.width = 14.0
     bar.gapWidth = 140
@@ -367,18 +392,18 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
     bar.x_axis.txPr = _text_props(8)
     bar.y_axis.txPr = _text_props(8)
 
-    min_rate = min(total_rate_values + [0.9990])
+    min_rate = min(first_rate_values + second_rate_values + first_target_values + second_target_values)
     bar.y_axis.scaling.min = max(0.90, min_rate - 0.01)
     bar.y_axis.scaling.max = 1.00
 
-    bar_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=3, max_row=3)
+    bar_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=3, max_row=4)
     bar.add_data(bar_data, titles_from_data=True, from_rows=True)
     bar.set_categories(cats)
     bar.x_axis.delete = False
     bar.y_axis.delete = False
     bar.x_axis.tickLblPos = "nextTo"
     bar.y_axis.tickLblPos = "nextTo"
-    if bar.series:
+    if len(bar.series) >= 1:
         bar.series[0].graphicalProperties.solidFill = "8EC7F7"
         bar.series[0].graphicalProperties.line.solidFill = "4A90E2"
         bar.series[0].dLbls = DataLabelList()
@@ -390,10 +415,21 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
         bar.series[0].dLbls.dLblPos = "outEnd"
         bar.series[0].dLbls.numFmt = "0.00%"
         bar.series[0].dLbls.txPr = _text_props(7)
+    if len(bar.series) >= 2:
+        bar.series[1].graphicalProperties.solidFill = "A8E6CF"
+        bar.series[1].graphicalProperties.line.solidFill = "27AE60"
+        bar.series[1].dLbls = DataLabelList()
+        bar.series[1].dLbls.showVal = True
+        bar.series[1].dLbls.showSerName = False
+        bar.series[1].dLbls.showCatName = False
+        bar.series[1].dLbls.showLegendKey = False
+        bar.series[1].dLbls.showPercent = False
+        bar.series[1].dLbls.dLblPos = "outEnd"
+        bar.series[1].dLbls.numFmt = "0.00%"
+        bar.series[1].dLbls.txPr = _text_props(7)
 
-    # 折线：日趋势 + 目标线
     line = LineChart()
-    line_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=4, max_row=5)
+    line_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=5, max_row=8)
     line.add_data(line_data, titles_from_data=True, from_rows=True)
     line.set_categories(cats)
     line.y_axis.axId = 200
@@ -403,10 +439,10 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
     line.y_axis.majorGridlines = None
     line.y_axis.delete = True
 
+    last_idx = max(0, n - 1)
     if len(line.series) >= 1:
-        # 日趋势
         line.series[0].graphicalProperties.line.solidFill = "F39C12"
-        line.series[0].graphicalProperties.line.width = 28575  # 2.25pt
+        line.series[0].graphicalProperties.line.width = 28575
         line.series[0].marker.symbol = "circle"
         line.series[0].marker.size = 6
         line.series[0].dLbls = DataLabelList()
@@ -415,27 +451,70 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
         line.series[0].dLbls.showCatName = False
         line.series[0].dLbls.showLegendKey = False
         line.series[0].dLbls.showPercent = False
-        line.series[0].dLbls.dLblPos = "t"
+        line.series[0].dLbls.dLblPos = "b"
         line.series[0].dLbls.numFmt = "0.00%"
         line.series[0].dLbls.txPr = _text_props(7)
     if len(line.series) >= 2:
-        # 目标线
-        line.series[1].graphicalProperties.line.solidFill = "D9534F"
-        line.series[1].graphicalProperties.line.width = 19050  # 1.5pt
-        line.series[1].graphicalProperties.line.dashStyle = "sysDot"
-        line.series[1].marker.symbol = "none"
+        line.series[1].graphicalProperties.line.solidFill = "1ABC9C"
+        line.series[1].graphicalProperties.line.width = 28575
+        line.series[1].marker.symbol = "circle"
+        line.series[1].marker.size = 6
         line.series[1].dLbls = DataLabelList()
-        line.series[1].dLbls.showVal = False
+        line.series[1].dLbls.showVal = True
         line.series[1].dLbls.showSerName = False
         line.series[1].dLbls.showCatName = False
         line.series[1].dLbls.showLegendKey = False
         line.series[1].dLbls.showPercent = False
-        line.series[1].dLbls.dLblPos = "r"
+        line.series[1].dLbls.dLblPos = "t"
         line.series[1].dLbls.numFmt = "0.00%"
         line.series[1].dLbls.txPr = _text_props(7)
-        line.series[1].dLbls.dLbl = [
+    if len(line.series) >= 3:
+        line.series[2].graphicalProperties.line.solidFill = "D9534F"
+        line.series[2].graphicalProperties.line.width = 19050
+        line.series[2].graphicalProperties.line.dashStyle = "sysDot"
+        line.series[2].marker.symbol = "triangle"
+        line.series[2].marker.size = 5
+        line.series[2].dLbls = DataLabelList()
+        line.series[2].dLbls.showVal = False
+        line.series[2].dLbls.showSerName = False
+        line.series[2].dLbls.showCatName = False
+        line.series[2].dLbls.showLegendKey = False
+        line.series[2].dLbls.showPercent = False
+        line.series[2].dLbls.dLblPos = "r"
+        line.series[2].dLbls.numFmt = "0.00%"
+        line.series[2].dLbls.txPr = _text_props(7)
+        line.series[2].dLbls.dLbl = [
             DataLabel(
-                idx=max(0, len(target_values) - 1),
+                idx=last_idx,
+                showVal=True,
+                showSerName=False,
+                showCatName=False,
+                showLegendKey=False,
+                showPercent=False,
+                showBubbleSize=False,
+                dLblPos="r",
+                numFmt="0.00%",
+                separator="",
+            )
+        ]
+    if len(line.series) >= 4:
+        line.series[3].graphicalProperties.line.solidFill = "8E44AD"
+        line.series[3].graphicalProperties.line.width = 19050
+        line.series[3].graphicalProperties.line.dashStyle = "sysDot"
+        line.series[3].marker.symbol = "triangle"
+        line.series[3].marker.size = 5
+        line.series[3].dLbls = DataLabelList()
+        line.series[3].dLbls.showVal = False
+        line.series[3].dLbls.showSerName = False
+        line.series[3].dLbls.showCatName = False
+        line.series[3].dLbls.showLegendKey = False
+        line.series[3].dLbls.showPercent = False
+        line.series[3].dLbls.dLblPos = "r"
+        line.series[3].dLbls.numFmt = "0.00%"
+        line.series[3].dLbls.txPr = _text_props(7)
+        line.series[3].dLbls.dLbl = [
+            DataLabel(
+                idx=last_idx,
                 showVal=True,
                 showSerName=False,
                 showCatName=False,
@@ -451,11 +530,11 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
     bar += line
     bar.legend.position = "b"
     bar.legend.txPr = _text_props(7.5)
-    _finalize_dashboard_rate_chart(bar, ws)
+    _finalize_dashboard_rate_chart(final_data, bar, ws)
 
 def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor: str = "A2") -> None:
     """
-    使用 openpyxl 原生图表生成组合图（汇总柱状 + 日趋势折线 + 目标线）。
+    openpyxl 组合图：双柱（一次/二次年或月汇总）+ 四线（两次日趋势 + 两项目标良率）。
     """
     def _text_props(size_pt: float) -> RichText:
         size = int(size_pt * 100)
@@ -473,54 +552,71 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     if not date_labels:
         return
 
-    total_rate_values = [_rate_to_float(v) for v in final_data.iloc[9][1:].tolist()]
-    if not total_rate_values:
+    first_target_values = [_rate_to_float(v) for v in final_data.iloc[3][1:].tolist()]
+    second_target_values = [_rate_to_float(v) for v in final_data.iloc[4][1:].tolist()]
+    first_rate_values = [_rate_to_float(v) for v in final_data.iloc[8][1:].tolist()]
+    second_rate_values = [_rate_to_float(v) for v in final_data.iloc[9][1:].tolist()]
+    n = len(date_labels)
+    if (
+        not first_rate_values
+        or len(first_rate_values) != n
+        or len(second_rate_values) != n
+        or len(first_target_values) != n
+        or len(second_target_values) != n
+    ):
         return
 
-    # 查找日数据分界：例如 04/21 视为日趋势部分
     split_index = next((i for i, label in enumerate(date_labels) if "/" in label), len(date_labels))
     if split_index == 0:
         split_index = len(date_labels)
 
-    target_values = [0.9970] * len(total_rate_values)
-    summary_values = [
-        total_rate_values[i] if i < split_index else None for i in range(len(total_rate_values))
-    ]
-    daily_values = [
-        total_rate_values[i] if i >= split_index else None for i in range(len(total_rate_values))
-    ]
+    summary_first = [first_rate_values[i] if i < split_index else None for i in range(n)]
+    summary_second = [second_rate_values[i] if i < split_index else None for i in range(n)]
+    daily_first = [first_rate_values[i] if i >= split_index else None for i in range(n)]
+    daily_second = [second_rate_values[i] if i >= split_index else None for i in range(n)]
 
-    # 在右侧隐藏区域准备图表数据源，避免影响主展示区域
-    helper_col = 70  # BR 列附近
+    helper_col = 70
     ws.cell(row=2, column=helper_col, value="序列")
     ws.cell(row=2, column=helper_col + 1, value="日期")
-    ws.cell(row=3, column=helper_col, value="年/月汇总")
-    ws.cell(row=4, column=helper_col, value="日良率趋势")
-    ws.cell(row=5, column=helper_col, value="目标良率")
+    ws.cell(row=3, column=helper_col, value="一次年/月汇总")
+    ws.cell(row=4, column=helper_col, value="二次年/月汇总")
+    ws.cell(row=5, column=helper_col, value="一次日趋势")
+    ws.cell(row=6, column=helper_col, value="二次日趋势")
+    ws.cell(row=7, column=helper_col, value="一次目標良率")
+    ws.cell(row=8, column=helper_col, value="二次目標良率")
 
-    for idx, (label, summary, daily, target) in enumerate(
-        zip(date_labels, summary_values, daily_values, target_values)
+    for idx, row_vals in enumerate(
+        zip(
+            date_labels,
+            summary_first,
+            summary_second,
+            daily_first,
+            daily_second,
+            first_target_values,
+            second_target_values,
+        )
     ):
+        label, s1, s2, d1, d2, t1, t2 = row_vals
         col = helper_col + 1 + idx
         ws.cell(row=2, column=col, value=label)
-        ws.cell(row=3, column=col, value=summary)
-        ws.cell(row=4, column=col, value=daily)
-        ws.cell(row=5, column=col, value=target)
-        ws.cell(row=3, column=col).number_format = "0.00%"
-        ws.cell(row=4, column=col).number_format = "0.00%"
-        ws.cell(row=5, column=col).number_format = "0.00%"
+        ws.cell(row=3, column=col, value=s1)
+        ws.cell(row=4, column=col, value=s2)
+        ws.cell(row=5, column=col, value=d1)
+        ws.cell(row=6, column=col, value=d2)
+        ws.cell(row=7, column=col, value=t1)
+        ws.cell(row=8, column=col, value=t2)
+        for r in range(3, 9):
+            ws.cell(row=r, column=col).number_format = "0.00%"
 
     end_col = helper_col + len(date_labels)
     cats = Reference(ws, min_col=helper_col + 1, max_col=end_col, min_row=2, max_row=2)
 
-    # 柱状图：年/月汇总
     bar = BarChart()
-    bar.title = "总良率趋势图"
+    bar.title = "一次/二次良率趋势图"
     bar.type = "col"
     bar.style = 10
-    bar.y_axis.title = "总良率"
+    bar.y_axis.title = "良率"
     bar.x_axis.title = "日期"
-    # 尺寸将由 TwoCellAnchor 控制，这里仅给默认值
     bar.height = 5.0
     bar.width = 14.0
     bar.gapWidth = 140
@@ -529,18 +625,18 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     bar.x_axis.txPr = _text_props(8)
     bar.y_axis.txPr = _text_props(8)
 
-    min_rate = min(total_rate_values + [0.9970])
+    min_rate = min(first_rate_values + second_rate_values + first_target_values + second_target_values)
     bar.y_axis.scaling.min = max(0.90, min_rate - 0.01)
     bar.y_axis.scaling.max = 1.00
 
-    bar_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=3, max_row=3)
+    bar_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=3, max_row=4)
     bar.add_data(bar_data, titles_from_data=True, from_rows=True)
     bar.set_categories(cats)
     bar.x_axis.delete = False
     bar.y_axis.delete = False
     bar.x_axis.tickLblPos = "nextTo"
     bar.y_axis.tickLblPos = "nextTo"
-    if bar.series:
+    if len(bar.series) >= 1:
         bar.series[0].graphicalProperties.solidFill = "8EC7F7"
         bar.series[0].graphicalProperties.line.solidFill = "4A90E2"
         bar.series[0].dLbls = DataLabelList()
@@ -552,10 +648,21 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
         bar.series[0].dLbls.dLblPos = "outEnd"
         bar.series[0].dLbls.numFmt = "0.00%"
         bar.series[0].dLbls.txPr = _text_props(7)
+    if len(bar.series) >= 2:
+        bar.series[1].graphicalProperties.solidFill = "A8E6CF"
+        bar.series[1].graphicalProperties.line.solidFill = "27AE60"
+        bar.series[1].dLbls = DataLabelList()
+        bar.series[1].dLbls.showVal = True
+        bar.series[1].dLbls.showSerName = False
+        bar.series[1].dLbls.showCatName = False
+        bar.series[1].dLbls.showLegendKey = False
+        bar.series[1].dLbls.showPercent = False
+        bar.series[1].dLbls.dLblPos = "outEnd"
+        bar.series[1].dLbls.numFmt = "0.00%"
+        bar.series[1].dLbls.txPr = _text_props(7)
 
-    # 折线：日趋势 + 目标线
     line = LineChart()
-    line_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=4, max_row=5)
+    line_data = Reference(ws, min_col=helper_col, max_col=end_col, min_row=5, max_row=8)
     line.add_data(line_data, titles_from_data=True, from_rows=True)
     line.set_categories(cats)
     line.y_axis.axId = 200
@@ -565,10 +672,10 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     line.y_axis.majorGridlines = None
     line.y_axis.delete = True
 
+    last_idx = max(0, n - 1)
     if len(line.series) >= 1:
-        # 日趋势
         line.series[0].graphicalProperties.line.solidFill = "F39C12"
-        line.series[0].graphicalProperties.line.width = 28575  # 2.25pt
+        line.series[0].graphicalProperties.line.width = 28575
         line.series[0].marker.symbol = "circle"
         line.series[0].marker.size = 6
         line.series[0].dLbls = DataLabelList()
@@ -577,27 +684,70 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
         line.series[0].dLbls.showCatName = False
         line.series[0].dLbls.showLegendKey = False
         line.series[0].dLbls.showPercent = False
-        line.series[0].dLbls.dLblPos = "t"
+        line.series[0].dLbls.dLblPos = "b"
         line.series[0].dLbls.numFmt = "0.00%"
         line.series[0].dLbls.txPr = _text_props(7)
     if len(line.series) >= 2:
-        # 目标线
-        line.series[1].graphicalProperties.line.solidFill = "D9534F"
-        line.series[1].graphicalProperties.line.width = 19050  # 1.5pt
-        line.series[1].graphicalProperties.line.dashStyle = "sysDot"
-        line.series[1].marker.symbol = "none"
+        line.series[1].graphicalProperties.line.solidFill = "1ABC9C"
+        line.series[1].graphicalProperties.line.width = 28575
+        line.series[1].marker.symbol = "circle"
+        line.series[1].marker.size = 6
         line.series[1].dLbls = DataLabelList()
-        line.series[1].dLbls.showVal = False
+        line.series[1].dLbls.showVal = True
         line.series[1].dLbls.showSerName = False
         line.series[1].dLbls.showCatName = False
         line.series[1].dLbls.showLegendKey = False
         line.series[1].dLbls.showPercent = False
-        line.series[1].dLbls.dLblPos = "r"
+        line.series[1].dLbls.dLblPos = "t"
         line.series[1].dLbls.numFmt = "0.00%"
         line.series[1].dLbls.txPr = _text_props(7)
-        line.series[1].dLbls.dLbl = [
+    if len(line.series) >= 3:
+        line.series[2].graphicalProperties.line.solidFill = "D9534F"
+        line.series[2].graphicalProperties.line.width = 19050
+        line.series[2].graphicalProperties.line.dashStyle = "sysDot"
+        line.series[2].marker.symbol = "triangle"
+        line.series[2].marker.size = 5
+        line.series[2].dLbls = DataLabelList()
+        line.series[2].dLbls.showVal = False
+        line.series[2].dLbls.showSerName = False
+        line.series[2].dLbls.showCatName = False
+        line.series[2].dLbls.showLegendKey = False
+        line.series[2].dLbls.showPercent = False
+        line.series[2].dLbls.dLblPos = "r"
+        line.series[2].dLbls.numFmt = "0.00%"
+        line.series[2].dLbls.txPr = _text_props(7)
+        line.series[2].dLbls.dLbl = [
             DataLabel(
-                idx=max(0, len(target_values) - 1),
+                idx=last_idx,
+                showVal=True,
+                showSerName=False,
+                showCatName=False,
+                showLegendKey=False,
+                showPercent=False,
+                showBubbleSize=False,
+                dLblPos="r",
+                numFmt="0.00%",
+                separator="",
+            )
+        ]
+    if len(line.series) >= 4:
+        line.series[3].graphicalProperties.line.solidFill = "8E44AD"
+        line.series[3].graphicalProperties.line.width = 19050
+        line.series[3].graphicalProperties.line.dashStyle = "sysDot"
+        line.series[3].marker.symbol = "triangle"
+        line.series[3].marker.size = 5
+        line.series[3].dLbls = DataLabelList()
+        line.series[3].dLbls.showVal = False
+        line.series[3].dLbls.showSerName = False
+        line.series[3].dLbls.showCatName = False
+        line.series[3].dLbls.showLegendKey = False
+        line.series[3].dLbls.showPercent = False
+        line.series[3].dLbls.dLblPos = "r"
+        line.series[3].dLbls.numFmt = "0.00%"
+        line.series[3].dLbls.txPr = _text_props(7)
+        line.series[3].dLbls.dLbl = [
+            DataLabel(
+                idx=last_idx,
                 showVal=True,
                 showSerName=False,
                 showCatName=False,
@@ -613,7 +763,7 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     bar += line
     bar.legend.position = "b"
     bar.legend.txPr = _text_props(7.5)
-    _finalize_dashboard_rate_chart(bar, ws)
+    _finalize_dashboard_rate_chart(final_data, bar, ws)
 
 def build_dashboard_export_bytes(
     key,
@@ -621,6 +771,7 @@ def build_dashboard_export_bytes(
     data: pd.DataFrame,
     production_name: str | None = None,
     inspection_location: str | None = None,
+    shift: str | None = None,
 ) -> bytes:
     sel_p = production_name if production_name in PRODUCT_NAME_OPTIONS else DEFAULT_PRODUCT_NAME
     sel_i = (
@@ -628,7 +779,8 @@ def build_dashboard_export_bytes(
         if inspection_location in INSPECTION_LOCATION_OPTIONS
         else "不限"
     )
-    title_parts = [str(key or "-"), str(process or "-"), f"品名 {sel_p}"]
+    sel_shift = shift if shift in SHIFT_OPTIONS else "不限"
+    title_parts = [str(key or "-"), str(process or "-"), f"品名 {sel_p}", f"班别 {sel_shift}"]
     if (process or "") == "CNC0" and sel_i != "不限":
         title_parts.append(f"抽检 {sel_i}")
     title = " | ".join(title_parts)
@@ -914,18 +1066,19 @@ def build_dashboard_export_bytes(
             else: #cnc0
                 add_native_good_rate_chart_jinjia_cnc0(ws, final_data, anchor="A2")
 
-        ws["A17"] = "前五项不良"
+
+        process_x_map = {
+            "鍛壓": 17,
+            "固熔": 17,   
+            "時效": 17,
+            "CNC0 全檢": 21, 
+            "CNC0": 22,     
+        }
+
+        x = process_x_map.get(process, 17)
+        ws[f"A{x}"] = "前五项不良"
             
-        # 添加边框
-        from openpyxl.styles import Border, Side
-        from openpyxl.styles import Alignment
-        # 定义细边框
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
+       
         
         # 计算数据范围（从startrow+1开始，因为标题占一行）
         start_row = 11  # startrow + 1（跳过标题行）
@@ -934,19 +1087,28 @@ def build_dashboard_export_bytes(
         end_col = start_col + len(final_data.columns) if final_data is not None else start_col
 
         # 让特定单元格的文字竖放（A17单元格）
-        cell = ws['A17']
+        cell = ws[f"A{x}"]
         cell.alignment = Alignment(text_rotation=255, vertical='center', horizontal='center')
         
-        # 合并A和B列的对应行，但跳过A17和B17行
-        for row in range(start_row, 17):
-            if row != 17:  # 跳过第17行
+        # 合并A和B列的对应行，但跳过A{x}和B{x}行
+        for row in range(start_row, x):
+            if row != x:  # 跳过第x行
                 # 先将B列的内容复制到A列（仅当final_data存在时）
                 if final_data is not None and row < start_row + len(final_data) + 1:
                     ws.cell(row=row, column=1).value = ws.cell(row=row, column=2).value
                 # 然后再合并A和B列
                 ws.merge_cells(f'A{row}:B{row}')
 
-        ws.merge_cells('A17:A21')
+        ws.merge_cells(f"A{x}:A{x+4}")
+
+         
+        # 定义细边框
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
 
         # 为数据区域添加边框
         for row in range(start_row, end_row + 1):

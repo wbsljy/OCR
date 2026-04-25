@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from extensions import get_db, render_template
-from services.dashboard_service import build_dashboard_context
+from services.dashboard_service import SHIFT_OPTIONS, build_dashboard_context
 from services.export import (
     build_dashboard_export_bytes,
     export_rows_is_empty,
@@ -45,8 +45,9 @@ def export_dashboard(
     end_date: str | None = None,
     production_name: str | None = None,
     inspection_location: str | None = None,
+    shift: str | None = None,
 ):
-    """按 key、製程、日期区间与品名（及金加 CNC0 时抽检位置）导出 Excel；不应用班别/批次/线别筛选。"""
+    """按 key、製程、日期区间、品名与班别导出 Excel；金加 CNC0 时含抽检位置。不含批次/线别筛选。"""
     try:
         selected_key, selected_process, start_value, end_value, records = (
             fetch_dashboard_records_for_export(
@@ -57,6 +58,7 @@ def export_dashboard(
                 end_date=end_date,
                 production_name=production_name,
                 inspection_location=inspection_location,
+                shift_name=shift,
             )
         )
     except ValueError as exc:
@@ -76,9 +78,12 @@ def export_dashboard(
         data=records,
         production_name=production_name,
         inspection_location=inspection_location,
+        shift=shift,
     )
+    sel_shift = shift if shift in SHIFT_OPTIONS else "不限"
+    shift_seg = f"_{sel_shift}" if sel_shift != "不限" else ""
     fname = (
-        f"看板_{selected_key}_{selected_process}_{start_value.isoformat()}_{end_value.isoformat()}.xlsx"
+        f"看板_{selected_key}_{selected_process}{shift_seg}_{start_value.isoformat()}_{end_value.isoformat()}.xlsx"
     )
     ascii_fallback = f"dashboard_{start_value.isoformat()}_{end_value.isoformat()}.xlsx"
     cd = f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(fname)}"
