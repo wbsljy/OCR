@@ -381,7 +381,7 @@ base_table_4 = """
   </tr>
   <tr>
     <td>二次良率目標</td>
-    <td colspan="3">100.00%</td>
+    <td colspan="3">99.90%</td>
   </tr>
   <tr>
     <td>不良項目</td>
@@ -475,11 +475,11 @@ base_table_5 = """
   </tr>
   <tr>
     <td>一次良率目標</td>
-    <td colspan="2">99.90%</td>
+    <td colspan="2">99.70%</td>
   </tr>
   <tr>
     <td>二次良率目標</td>
-    <td colspan="2">100%</td>
+    <td colspan="2">99.90%</td>
   </tr>
   <tr>
     <td>不良項目</td>

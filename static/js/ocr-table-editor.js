@@ -147,7 +147,24 @@ export function renderOcrTableEditor(raw) {
  * @param {HTMLElement} tables `#ocr-result-tables`
  */
 function setupCnc0SecondBlockUi(tables) {
-    if (!tables || tables.querySelector(".cnc0-second-block")) return;
+    if (!tables) return;
+    // 清掉上次注入的锁定标题栏（先把 h1 标题剥回 ocr-inter-html，避免丢段标题）
+    tables.querySelectorAll(".cnc0-second-title-row").forEach((row) => {
+        const h1 = row.querySelector("h1.ocr-meta-title");
+        if (h1 && row.parentNode) {
+            const inter = document.createElement("div");
+            inter.className = "ocr-inter-html";
+            inter.appendChild(h1);
+            row.parentNode.insertBefore(inter, row);
+        }
+        row.remove();
+    });
+    tables.querySelectorAll(".cnc0-second-block").forEach((block) => {
+        const parent = block.parentNode;
+        if (!parent) return;
+        while (block.firstChild) parent.insertBefore(block.firstChild, block);
+        block.remove();
+    });
 
     const prevLocked = state.cnc0SecondBlockLocked;
     state.cnc0SecondBlockLocked = false;

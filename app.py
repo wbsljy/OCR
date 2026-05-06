@@ -1,5 +1,6 @@
 """FastAPI 应用入口，负责组装路由、中间件和启动流程。"""
 
+import logging
 import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.responses import RedirectResponse

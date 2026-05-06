@@ -162,6 +162,11 @@ if (btnVerify) {
                 setStatus("当前页缺少任务 ID，无法提交。", true);
                 return;
             }
+            if (state.verifySubmitInFlight) {
+                setStatus("验证请求进行中，请稍候…", true);
+                return;
+            }
+            state.verifySubmitInFlight = true;
             setStatus("正在进行前端校验...");
             const validation = runBoardValidationBeforeSubmit();
             if (!validation.ok) {
@@ -228,6 +233,8 @@ if (btnVerify) {
             console.error("verify submit failed:", e);
             setStatus(e?.message ? `前端校验异常：${e.message}` : "验证请求失败", true);
             btnVerify.disabled = false;
+        } finally {
+            state.verifySubmitInFlight = false;
         }
     });
 }

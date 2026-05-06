@@ -13,7 +13,7 @@ export const state = {
     fileUrlForPdf: null,
     currentTaskId: null,
     isVerified: false,
-    /** 待验证任务 ID（新到旧），与 GET /api/tasks/unverified-queue 一致 */
+    /** 待验证任务 ID（按任务 ID 升序），与 GET /api/tasks/unverified-queue 一致 */
     unverifiedTaskIds: Array.isArray(window.OCR_UNVERIFIED_TASK_IDS)
         ? window.OCR_UNVERIFIED_TASK_IDS.slice()
         : [],
@@ -23,4 +23,7 @@ export const state = {
     lastQueuePosition: -1,
     /** 金加 CNC0 双表时：为 true 则校验与提交仅第一段，忽略第二段「品質明細表」及以下 */
     cnc0SecondBlockLocked: false,
+
+    /** 防止「通过 / 再次通过」连点触发并发 verify，导致两次入库交错、后写覆盖前写 */
+    verifySubmitInFlight: false,
 };

@@ -241,7 +241,7 @@ body.page--ocr-workspace .page-shell {
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
-    min-height: 520px;
+    min-height: clamp(720px, 105.6vh, 1296px);
     border: 1px dashed #cbd5e1;
     border-radius: 12px;
     padding: 14px;
@@ -258,7 +258,7 @@ body.page--ocr-workspace .page-shell {
 .preview-container embed {
     max-width: 100%;
     width: 100%;
-    min-height: 480px;
+    min-height: clamp(672px, 100.8vh, 1248px);
     border: 0;
 }
 
@@ -269,6 +269,15 @@ body.page--ocr-workspace .page-shell {
     min-height: 0;
     border: 0;
     display: block;
+}
+
+/* 製程 CNC0（不含 CNC0 全檢）：原文件预览区整体下移（与右侧首段对齐观感；距离见 --cnc0-preview-offset-y） */
+:root {
+    --cnc0-preview-offset-y: 16rem;
+}
+
+.preview-container.preview-container--cnc0 {
+    margin-top: var(--cnc0-preview-offset-y);
 }
 
 .verify-bar {
@@ -684,6 +693,6 @@ body.page--ocr-workspace .page-shell {
     }
 
     .preview-container {
-        min-height: 360px;
+        min-height: clamp(528px, 86.4vh, 912px);
     }
 }

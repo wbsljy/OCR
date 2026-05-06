@@ -23,18 +23,38 @@ import {
 } from "./ocr-dom.js";
 import { setOcrTablesMessage } from "./ocr-utils-html.js";
 import { renderOcrTableEditor } from "./ocr-table-editor.js";
+import { getValidationTableContext, normalizeProcessName } from "./ocr-board-validation.js";
 
 /** 与 .preview-container 左右 padding 之和一致，避免贴边裁切 */
 const PREVIEW_PAD_X = 28;
 
 /**
+ * 金加、製程為 CNC0（不含 CNC0 全檢）：左侧原文件预览区增加下移样式（`.preview-container--cnc0`）。
+ */
+export function syncPreviewContainerCnc0Offset() {
+    const el = getPreviewContainer();
+    if (!el) return;
+    if (!state.markdownPages?.length) {
+        el.classList.remove("preview-container--cnc0");
+        return;
+    }
+    const ctx = getValidationTableContext();
+    const p = normalizeProcessName(ctx.process || "");
+    if (p === "CNC0") {
+        el.classList.add("preview-container--cnc0");
+    } else {
+        el.classList.remove("preview-container--cnc0");
+    }
+}
+
+/**
  * 在 fit-width 基础上额外提高栅格倍数（backing store 更密，CSS 仍按 displayScale 贴合容器）。
  * 桌面 PDF 阅读器观感更锐，需显著高于 1；过大则内存与耗时上升。
  */
-const RENDER_SUPER_SAMPLE = 2;
+const RENDER_SUPER_SAMPLE = 1.35;
 
 /** 单页栅格宽度下限（px），避免窄侧栏时有效分辨率过低、与 WPS 等对比发糊 */
-const MIN_BACKING_PAGE_WIDTH_PX = 3000;
+const MIN_BACKING_PAGE_WIDTH_PX = 1800;
 
 /** displayScale 上限（仅限制「按页宽适配」倍数，不限制上面叠加的栅格增强） */
 const DISPLAY_SCALE_CAP = 6;
@@ -43,7 +63,7 @@ const DISPLAY_SCALE_CAP = 6;
 const MAX_PIXEL_SCALE_OVER_BASE = 10;
 
 /** 单张 canvas 最大边长（px），超限则按比例收缩栅格 */
-const MAX_CANVAS_EDGE_PX = 6144;
+const MAX_CANVAS_EDGE_PX = 4096;
 
 /** 预览区宽度变化时重绘防抖（ms） */
 const PREVIEW_RESIZE_DEBOUNCE_MS = 120;
@@ -52,6 +72,37 @@ let previewResizeObserver = null;
 let previewResizeDebounceTimer = null;
 /** 监听父级面板宽度，避免监听 preview 自身导致「内容撑宽 → 重绘 → 再撑宽」 */
 let lastPreviewPanelObservedWidth = 0;
+/** 防止快速切换任务时旧渲染结果覆盖新任务预览 */
+let previewRenderToken = 0;
+/** 复用已加载过的 PDF 文档，减少重复网络与解析开销 */
+const pdfDocCache = new Map();
+const MAX_PDF_DOC_CACHE_SIZE = 12;
+
+function buildPdfIframeSrc(url) {
+    // 尽量隐藏内置 PDF 工具栏，并以整页适配方式打开。
+    return `${url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`;
+}
+
+function touchPdfDocCache(key, value) {
+    if (pdfDocCache.has(key)) pdfDocCache.delete(key);
+    pdfDocCache.set(key, value);
+    if (pdfDocCache.size > MAX_PDF_DOC_CACHE_SIZE) {
+        const oldestKey = pdfDocCache.keys().next().value;
+        pdfDocCache.delete(oldestKey);
+    }
+}
+
+function getPdfDocByUrl(url) {
+    const cached = pdfDocCache.get(url);
+    if (cached) {
+        touchPdfDocCache(url, cached);
+        return Promise.resolve(cached);
+    }
+    return pdfjsLib.getDocument({ url }).promise.then((pdf) => {
+        touchPdfDocCache(url, pdf);
+        return pdf;
+    });
+}
 
 function getPreviewContainerContentWidth(container) {
     const rect = container.getBoundingClientRect();
@@ -235,6 +286,8 @@ export function resetPagination() {
     state.isVerified = false;
     state.lastQueuePosition = -1;
     state.cnc0SecondBlockLocked = false;
+    state.verifySubmitInFlight = false;
+    syncPreviewContainerCnc0Offset();
     if (pageNav) pageNav.style.display = "none";
     if (verifyBar) verifyBar.style.display = "none";
     if (segmentNav) segmentNav.style.display = "none";
@@ -423,6 +476,7 @@ export function updateCurrentTaskId() {
 export function loadLeftPreviewForCurrentIndex() {
     const previewContainer = getPreviewContainer();
     if (!previewContainer) return;
+    const currentToken = ++previewRenderToken;
 
     const slot = state.markdownPages[state.currentPageIndex - 1];
 
@@ -431,27 +485,10 @@ export function loadLeftPreviewForCurrentIndex() {
         const ftype = (slot.file_type || "").toLowerCase();
 
         if (ftype === "pdf" || /\.pdf$/i.test(abs)) {
-            if (typeof pdfjsLib !== "undefined") {
-                pdfjsLib.getDocument({ url: abs }).promise
-                    .then((pdf) => {
-                        state.pdfDoc = pdf;
-                        state.pdfTotalPages = pdf.numPages;
-                        return pdf.getPage(1);
-                    })
-                    .then((page) =>
-                        renderPdfPageToPreviewCanvas(page, previewContainer).then((canvas) => {
-                            previewContainer.innerHTML = "";
-                            previewContainer.appendChild(canvas);
-                        })
-                    )
-                    .catch(() => {
-                        previewContainer.innerHTML =
-                            `<iframe src="${abs}" title="PDF 预览"></iframe>`;
-                    });
-            } else {
-                previewContainer.innerHTML =
-                    `<iframe src="${abs}" title="PDF 预览"></iframe>`;
-            }
+            previewContainer.innerHTML =
+                `<iframe src="${buildPdfIframeSrc(abs)}" title="PDF 预览"></iframe>`;
+            state.pdfDoc = null;
+            state.pdfTotalPages = 0;
             return;
         }
 
@@ -472,10 +509,12 @@ export function loadLeftPreviewForCurrentIndex() {
         const pageNum = Math.min(state.currentPageIndex, state.pdfTotalPages);
         state.pdfDoc.getPage(pageNum).then((page) => {
             renderPdfPageToPreviewCanvas(page, previewContainer).then((canvas) => {
+                if (currentToken !== previewRenderToken) return;
                 previewContainer.innerHTML = "";
                 previewContainer.appendChild(canvas);
             });
         }).catch(() => {
+            if (currentToken !== previewRenderToken) return;
             previewContainer.innerHTML = '<p class="empty-tip">无法渲染该页</p>';
         });
     }
@@ -491,6 +530,7 @@ export function renderCurrentPage() {
             ?? state.markdownPages[state.markdownPages.length - 1];
         renderOcrTableEditor(pageContent);
     }
+    syncPreviewContainerCnc0Offset();
 }
 
 export function updateVerifyBar() {
@@ -547,6 +587,7 @@ export async function loadTaskResult(taskId) {
         if (metaLoadErr) metaLoadErr.innerHTML = "";
         setOcrTablesMessage('<p class="empty-tip">暂无内容</p>');
         if (verifyBar) verifyBar.style.display = "none";
+        getPreviewContainer()?.classList.remove("preview-container--cnc0");
     }
 }
 export function renderFilePreview(file) {
@@ -568,7 +609,8 @@ export function renderFilePreview(file) {
 
     if (extension === "pdf") {
         if (typeof pdfjsLib === "undefined") {
-            previewContainer.innerHTML = `<iframe src="${blobUrl}" title="PDF 预览"></iframe>`;
+            previewContainer.innerHTML =
+                `<iframe src="${buildPdfIframeSrc(blobUrl)}" title="PDF 预览"></iframe>`;
             return;
         }
         pdfjsLib.getDocument({ url: blobUrl }).promise
@@ -589,7 +631,8 @@ export function renderFilePreview(file) {
                 }
             })
             .catch(() => {
-                previewContainer.innerHTML = `<iframe src="${blobUrl}" title="PDF 预览"></iframe>`;
+                previewContainer.innerHTML =
+                    `<iframe src="${buildPdfIframeSrc(blobUrl)}" title="PDF 预览"></iframe>`;
             });
         return;
     }

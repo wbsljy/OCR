@@ -33,12 +33,12 @@ ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg"}
 
 
 def _unverified_task_id_list(db: Session) -> list[int]:
-    """成功且未验证的任务 ID 列表，与统计页 dedupe 语义一致（新到旧）。"""
+    """成功且未验证的任务 ID 列表，与统计页 dedupe 语义一致；按任务 ID 升序（最小为待验证第 1 个）。"""
     stmt = (
         select(OcrTask, OcrResult)
         .join(OcrResult, OcrResult.task_id == OcrTask.id)
         .where(OcrTask.status == "success", OcrResult.is_verified == False)  # noqa: E712
-        .order_by(OcrTask.created_at.desc(), OcrResult.id.desc())
+        .order_by(OcrTask.id.asc(), OcrResult.id.desc())
     )
     rows = db.execute(stmt).all()
     seen: set[int] = set()
@@ -95,7 +95,7 @@ def page(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/tasks/unverified-queue", name="unverified_task_queue")
 def unverified_task_queue(request: Request, db: Session = Depends(get_db)):
-    """返回待验证任务 ID 列表（新到旧），供 OCR 页队列导航。"""
+    """返回待验证任务 ID 列表（按任务 ID 升序），供 OCR 页队列导航。"""
     if not is_authenticated(request):
         return JSONResponse(
             {"success": False, "message": "请先登录。"},
@@ -469,13 +469,19 @@ def task_verify(
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
-    conflicts = apply_verified_dashboard_writes(
-        db,
-        task.id,
-        ocr_result,
-        records,
-        force_overwrite=body.force_overwrite,
-    )
+    try:
+        conflicts = apply_verified_dashboard_writes(
+            db,
+            task.id,
+            ocr_result,
+            records,
+            force_overwrite=body.force_overwrite,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            {"success": False, "message": f"结构化入库失败：{exc}"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
     if conflicts:
         return JSONResponse(
             {

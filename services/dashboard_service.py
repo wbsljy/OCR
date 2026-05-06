@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """数据看板的结构化解析、入库与查询服务。"""
 
+import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -31,6 +32,25 @@ INSPECTION_LOCATION_OPTIONS = ["製程抽檢", "入庫抽檢"]
 PRODUCT_NAME_OPTIONS = ["Y20 Housing", "X3784 Housing"]
 DEFAULT_PRODUCT_NAME = PRODUCT_NAME_OPTIONS[0]
 
+logger = logging.getLogger(__name__)
+
+# 与前端摘要格一致：OCR 简繁/别字键名归一到 _build_record 使用的字段名
+SUMMARY_FIELD_KEY_CANON: dict[str, str] = {
+    "抽检位置": "抽檢位置",
+    "抽验位置": "抽檢位置",
+    "生産日期": "生產日期",
+    "生产日期": "生產日期",
+    "班别": "班別",
+    "制程": "製程",
+}
+
+_CNC0_INSPECTION_VALUE_ALIASES: dict[str, str] = {
+    "入库抽检": "入庫抽檢",
+    "制程抽检": "製程抽檢",
+    "制造抽检": "製程抽檢",
+    "流程抽检": "製程抽檢",
+}
+
 PROCESS_MODEL_MAP = {
     ("沖壓", "鍛壓"): BoardChongyaDuanya,
     ("沖壓", "固熔"): BoardChongyaGurong,
@@ -45,6 +65,72 @@ class ParsedDashboardRecord:
     model: type
     unique_filter: dict[str, Any]
     payload: dict[str, Any]
+
+
+def _cnc0_payload_biz_tuple(p: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        p.get("production_date"),
+        p.get("shift"),
+        p.get("product_name"),
+        p.get("inspection_location"),
+    )
+
+
+def _log_cnc0_multi_summary_segment(
+    *,
+    segment_idx: int,
+    task_id: int,
+    ocr_result_id: int,
+    summary_i: int,
+    main_i: int,
+    summary_before_fallback: dict[str, str],
+    summary_after_fallback: dict[str, str],
+    record: ParsedDashboardRecord,
+) -> None:
+    rel = {k: v for k, v in summary_after_fallback.items() if "檢" in k or "检" in k}
+    pl = record.payload
+    logger.info(
+        "[CNC0解析] segment=%s task_id=%s ocr_result_id=%s summary_table_idx=%s main_table_idx=%s | "
+        "summary_keys=%s | inspection相关字段=%s | payload.inspection_location=%r | 四键=%s",
+        segment_idx,
+        task_id,
+        ocr_result_id,
+        summary_i,
+        main_i,
+        sorted(summary_after_fallback.keys()),
+        rel,
+        pl.get("inspection_location"),
+        _cnc0_payload_biz_tuple(pl),
+    )
+    if summary_before_fallback != summary_after_fallback:
+        logger.info(
+            "[CNC0解析] segment=%s _fill_summary_fallbacks 变更: before=%s after=%s",
+            segment_idx,
+            summary_before_fallback,
+            summary_after_fallback,
+        )
+
+
+def _warn_if_duplicate_cnc0_biz_keys(
+    records: list[ParsedDashboardRecord],
+    *,
+    task_id: int,
+    ocr_result_id: int,
+    path: str,
+) -> None:
+    cnc = [r for r in records if r.model is BoardJinjiaCnc0]
+    if len(cnc) < 2:
+        return
+    tuples = [_cnc0_payload_biz_tuple(r.payload) for r in cnc]
+    if len(tuples) == len(set(tuples)):
+        return
+    logger.warning(
+        "[CNC0解析] 同一批 records 四键重复 path=%s task_id=%s ocr_result_id=%s tuples=%s",
+        path,
+        task_id,
+        ocr_result_id,
+        tuples,
+    )
 
 
 def _stmt_match_product_name(model: type, stmt: Any, payload: dict[str, Any]) -> Any:
@@ -130,13 +216,20 @@ def apply_verified_dashboard_writes(
     if conflicts and not force_overwrite:
         return conflicts
 
+    _ensure_distinct_jinjia_cnc0_row_keys(records)
+
     delete_dashboard_records_for_task(db, task_id)
 
     for item in records:
         ex = find_existing_board_row(db, item.model, item.payload)
-        if ex:
+        if ex and ex.task_id != task_id:
             _apply_payload_to_board_row(ex, item.payload)
         else:
+            if item.model is BoardJinjiaCnc0 and ex is not None and ex.task_id == task_id:
+                raise ValueError(
+                    "CNC0 入库与本任务内已写入行业务键冲突（应先删本任务看板再插入，若仍出现请检查是否有重复的抽檢位置）。"
+                    f"四键={_cnc0_payload_biz_tuple(item.payload)}，已有行 id={getattr(ex, 'id', None)}。"
+                )
             db.add(item.model(**item.payload))
         db.flush()
     return []
@@ -170,6 +263,104 @@ def upsert_verified_dashboard_records(
     return len(records)
 
 
+def _is_non_full_cnc0_board_process(process: str) -> bool:
+    """金加 CNC0（非 CNC0 全檢）看板：与前端多段配对逻辑一致。"""
+    p = _compact_text(process).replace(" ", "")
+    if "CNC0" not in p:
+        return False
+    if "全檢" in process or "全检" in process:
+        return False
+    return True
+
+
+def _try_parse_jinjia_cnc0_multi_summary_blocks(
+    tables: list[Tag],
+    *,
+    task_id: int,
+    ocr_result_id: int,
+) -> list[ParsedDashboardRecord] | None:
+    """金加 CNC0 多段：每张摘要表后紧随的第一张非摘要表为主表（与前端 collectJinjiaCnc0MainTables 对齐）。"""
+    summary_idxs = [i for i, t in enumerate(tables) if _is_summary_table_relaxed(t)]
+    if len(summary_idxs) < 2:
+        return None
+    first_summary = _parse_summary_table(tables[summary_idxs[0]])
+    process = (first_summary.get("製程") or "").strip()
+    if _key_from_process(process) != "金加" or not _is_non_full_cnc0_board_process(process):
+        return None
+    pairs: list[tuple[int, int]] = []
+    for si in summary_idxs:
+        if si + 1 < len(tables) and not _is_summary_table_relaxed(tables[si + 1]):
+            pairs.append((si, si + 1))
+    if not pairs:
+        return None
+    logger.info(
+        "[CNC0解析] multi_summary 入口 task_id=%s ocr_result_id=%s table总数=%s summary下标=%s pairs=%s",
+        task_id,
+        ocr_result_id,
+        len(tables),
+        summary_idxs,
+        pairs,
+    )
+    records: list[ParsedDashboardRecord] = []
+    for seg_idx, (si, mi) in enumerate(pairs, start=1):
+        summary = _parse_summary_table(tables[si])
+        before_fb = dict(summary)
+        main_table = tables[mi]
+        block_html = str(tables[si]) + str(main_table)
+        summary = _fill_summary_fallbacks(summary, block_html)
+        record = _build_record_from_tables(
+            summary,
+            main_table,
+            task_id=task_id,
+            ocr_result_id=ocr_result_id,
+        )
+        records.append(record)
+        _log_cnc0_multi_summary_segment(
+            segment_idx=seg_idx,
+            task_id=task_id,
+            ocr_result_id=ocr_result_id,
+            summary_i=si,
+            main_i=mi,
+            summary_before_fallback=before_fb,
+            summary_after_fallback=dict(summary),
+            record=record,
+        )
+    _warn_if_duplicate_cnc0_biz_keys(
+        records, task_id=task_id, ocr_result_id=ocr_result_id, path="multi_summary"
+    )
+    return records
+
+
+def _norm_cnc0_inspection_location(raw: Any) -> str | None:
+    t = _compact_text(str(raw or "")).strip()
+    return t if t else None
+
+
+def _ensure_distinct_jinjia_cnc0_row_keys(records: list[ParsedDashboardRecord]) -> None:
+    """归一化 CNC0 抽檢位置；同一次入库批次内若出现重复四键则报错，不再静默改写。"""
+    seen: set[tuple[Any, Any, Any, Any]] = set()
+    for item in records:
+        if item.model is not BoardJinjiaCnc0:
+            continue
+        p = item.payload
+        loc_clean = _norm_cnc0_inspection_location(p.get("inspection_location"))
+        p["inspection_location"] = loc_clean
+        item.unique_filter["inspection_location"] = loc_clean
+        rk = (
+            p["production_date"],
+            p.get("shift"),
+            p.get("product_name"),
+            loc_clean,
+        )
+        if rk in seen:
+            raise ValueError(
+                "CNC0 同一次入库中存在重复业务键（生产日期、班别、品名、抽檢位置相同）。"
+                "请检查校对稿里多段摘要的「抽檢位置」是否一致或解析错误。"
+                f"重复键={rk}。"
+            )
+        seen.add(rk)
+
+
 def parse_verified_markdown_to_records(
     verified_markdown: str,
     *,
@@ -179,11 +370,19 @@ def parse_verified_markdown_to_records(
     """把 verified_markdown 解析成 1-N 条结构化业务记录。"""
     soup = BeautifulSoup(f"<div>{verified_markdown}</div>", "html.parser")
     tables = soup.find_all("table")
+    cnc0_blocks = _try_parse_jinjia_cnc0_multi_summary_blocks(
+        tables,
+        task_id=task_id,
+        ocr_result_id=ocr_result_id,
+    )
+    if cnc0_blocks is not None:
+        return cnc0_blocks
     records: list[ParsedDashboardRecord] = []
     i = 0
+    seg_generic = 0
     while i < len(tables):
         table = tables[i]
-        if not _is_summary_table(table):
+        if not _is_summary_table_relaxed(table):
             i += 1
             continue
         if i + 1 >= len(tables):
@@ -192,15 +391,31 @@ def parse_verified_markdown_to_records(
         main_table = tables[i + 1]
         block_html = str(tables[i]) + str(main_table)
         summary = _fill_summary_fallbacks(summary, block_html)
-        records.append(
-            _build_record_from_tables(
-                summary,
-                main_table,
-                task_id=task_id,
-                ocr_result_id=ocr_result_id,
-            )
+        record = _build_record_from_tables(
+            summary,
+            main_table,
+            task_id=task_id,
+            ocr_result_id=ocr_result_id,
         )
+        if record.model is BoardJinjiaCnc0:
+            seg_generic += 1
+            logger.info(
+                "[CNC0解析] generic_pair_loop segment=%s task_id=%s ocr_result_id=%s "
+                "summary_table_idx=%s main_table_idx=%s summary_keys=%s | payload.inspection_location=%r | 四键=%s",
+                seg_generic,
+                task_id,
+                ocr_result_id,
+                i,
+                i + 1,
+                sorted(summary.keys()),
+                record.payload.get("inspection_location"),
+                _cnc0_payload_biz_tuple(record.payload),
+            )
+        records.append(record)
         i += 2
+    _warn_if_duplicate_cnc0_biz_keys(
+        records, task_id=task_id, ocr_result_id=ocr_result_id, path="generic_pair_loop"
+    )
     return records
 
 
@@ -324,7 +539,8 @@ def _build_record_from_tables(
         "process_name": process,
     }
     if model is BoardJinjiaCnc0:
-        common_payload["inspection_location"] = summary.get("抽檢位置")
+        cnc0_inspection = _normalize_cnc0_inspection_summary_value(summary.get("抽檢位置"))
+        common_payload["inspection_location"] = cnc0_inspection
     grid = _table_to_grid(main_table)
 
     if model is BoardChongyaDuanya:
@@ -364,7 +580,7 @@ def _build_record_from_tables(
             "production_date": production_date,
             "shift": summary.get("班別"),
             "product_name": summary.get("品名"),
-            "inspection_location": summary.get("抽檢位置"),
+            "inspection_location": cnc0_inspection,
         }
     else:
         payload = build_cnc0_full_payload(grid)
@@ -554,7 +770,7 @@ def build_cnc0_payload(grid: list[list[str]]) -> dict[str, Any]:
         "first_yield": first_yield,
         "second_yield": second_yield,
         "first_target_yield": 99.70,
-        "second_target_yield": 100.00,
+        "second_target_yield": 99.90,
     }
 
     for prefix, row_idx in zip(defect_keys, defect_rows):
@@ -589,8 +805,8 @@ def build_cnc0_full_payload(grid: list[list[str]]) -> dict[str, Any]:
         "unreworkable_bad": unreworkable_bad,
         "first_yield": first_yield,
         "second_yield": second_yield,
-        "first_target_yield": 99.90,
-        "second_target_yield": 100.00,
+        "first_target_yield": 99.70,
+        "second_target_yield": 99.90,
     }
 
     for prefix, row_idx in zip(defect_keys, defect_rows):
@@ -1015,17 +1231,70 @@ def _is_summary_table(table: Tag) -> bool:
     return True
 
 
+def _is_summary_table_relaxed(table: Tag) -> bool:
+    """与前端 isSummaryTableRelaxed 对齐：单行摘要偶发少一格「：」时仍视为摘要，避免只入库一段。"""
+    if _is_summary_table(table):
+        return True
+    rows = table.find_all("tr")
+    if not rows:
+        return False
+    blob = _compact_text(table.get_text(" ", strip=True))
+    if not (
+        re.search(r"製程\s*[：:]", blob)
+        and re.search(r"生產日期\s*[：:]", blob)
+        and re.search(r"(班別|品名|抽檢|页码|頁碼)", blob)
+    ):
+        return False
+    if len(rows) == 1:
+        return True
+    if 2 <= len(rows) <= 4:
+        for row in rows:
+            cells = row.find_all(["td", "th"])
+            if not cells:
+                return False
+            texts = [_compact_text(c.get_text(" ", strip=True)) for c in cells]
+            if not any(":" in t or "：" in t for t in texts):
+                return False
+        return True
+    return False
+
+
+def _canonical_summary_field_key(raw_key: str) -> str:
+    k = _compact_text(raw_key.strip())
+    return SUMMARY_FIELD_KEY_CANON.get(k, k)
+
+
+def _normalize_cnc0_inspection_summary_value(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    v = _compact_text(str(raw).strip())
+    if not v:
+        return None
+    return _CNC0_INSPECTION_VALUE_ALIASES.get(v, v)
+
+
 def _parse_summary_table(table: Tag) -> dict[str, str]:
+    """与前端 readSummaryCellPair 对齐：优先读 .summary-field-label / .summary-field-value，再降级为整格「键：值」。"""
     summary: dict[str, str] = {}
     for cell in table.find_all(["td", "th"]):
+        label_el = cell.select_one(".summary-field-label")
+        value_el = cell.select_one(".summary-field-value")
+        if label_el is not None and value_el is not None:
+            key = _canonical_summary_field_key(label_el.get_text(" ", strip=True))
+            val = _compact_text(value_el.get_text(" ", strip=True))
+            if key:
+                summary[key] = val
+            continue
+
         text = _compact_text(cell.get_text(" ", strip=True))
         if "：" in text:
-            key, value = text.split("：", 1)
+            raw_key, value = text.split("：", 1)
         elif ":" in text:
-            key, value = text.split(":", 1)
+            raw_key, value = text.split(":", 1)
         else:
             continue
-        summary[key.strip()] = value.strip()
+        key = _canonical_summary_field_key(raw_key)
+        summary[key] = value.strip()
     return summary
 
 
@@ -1172,6 +1441,8 @@ def delete_dashboard_records_for_task(db: Session, task_id: int) -> int:
         for row in rows:
             db.delete(row)
             deleted += 1
+    # 立即 flush，避免后续 find_existing / INSERT 在同一会话里仍看到未落库的「待删」行
+    db.flush()
     return deleted
 
 

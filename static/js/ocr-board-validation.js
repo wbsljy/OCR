@@ -86,18 +86,23 @@ const batchValidator = (text) => {
     const compact = raw.replace(/\s/g, "");
     return /^\d{5}-\d$/.test(compact);
 };
-/** 鍛壓 row2：「一位数字+線+三位数字+模」或「空格+線+空格+模」占位 */
+/** 鍛壓 row2：「一位数字+線+三位数字+模」或去空格后为「線模」 */
 const lineModelValidator = (text) => {
     const s = String(text ?? "");
     if (s.trim() === "") return true;
     const okLine = /^\s*\d\s*線\s*\d{3}\s*模\s*$/.test(s);
-    const okPlaceholder = /^\s+線\s+模\s*$/.test(s);
-    return okLine || okPlaceholder;
+    const okLineMoOnly = s.replace(/\s/g, "") === "線模";
+    return okLine || okLineMoOnly;
 };
 const MAIN_TABLE_RULES = {
     鍛壓: [
         { rowRange: [1, 1], colList: [3, 5, 7, 9], validate: batchValidator, label: "五数字-一数字(可含空格)" },
-        { rowRange: [2, 2], colList: [3, 5, 7, 9], validate: lineModelValidator,label: "一数字+線+三数字+模 或 空格+線+空格+模" },
+        {
+            rowRange: [2, 2],
+            colList: [3, 5, 7, 9],
+            validate: lineModelValidator,
+            label: "一位数字+線+三位数字+模，或去空格为線模",
+        },
         { rowRange: [3, 5], colList: [3, 5, 7, 9], validate: strictIntValidator, label: "纯数字 int" },
         { rowRange: [9, 17], colList: [3, 5, 7, 9], validate: strictIntValidator, label: "纯数字 int" },
     ],
@@ -639,6 +644,93 @@ function getMainRuleForCell(ctx, targetCell) {
     return null;
 }
 
+/** 鍛壓：第一行某列为空时，自第三行起该列须为空（第二行仍按 MAIN_TABLE_RULES）。固熔：第一行为空或去空格为「線」时，自第二行起规定行段该列须为空。 */
+const FIRST_ROW_CASCADE_PROCESSES = new Set(["鍛壓", "固熔"]);
+
+/** 固熔顶行触发级联：空，或去掉空格后为「線」 */
+function shouldCascadeGurongRow1(topCell) {
+    const raw = String(topCell?.innerText ?? "");
+    if (raw.trim() === "") return true;
+    return raw.replace(/\s/g, "") === "線";
+}
+
+/**
+ * @returns {{ ok: boolean, errorCount: number, message: string | null, focusTarget: HTMLElement | null }}
+ */
+function validateFirstRowColumnCascade(ctx) {
+    const process = normalizeProcessName(ctx?.process || "");
+    if (!FIRST_ROW_CASCADE_PROCESSES.has(process)) {
+        return { ok: true, errorCount: 0, message: null, focusTarget: null };
+    }
+    const specs = MAIN_TABLE_EDITABLE_SPECS[process];
+    if (!specs?.length) {
+        return { ok: true, errorCount: 0, message: null, focusTarget: null };
+    }
+    const row1Spec = specs.find((s) => {
+        const [a, b] = specRowRangeEnds(s);
+        return a === 1 && b === 1;
+    });
+    if (!row1Spec) {
+        return { ok: true, errorCount: 0, message: null, focusTarget: null };
+    }
+    const topCols = expandRuleCols(row1Spec);
+    const mains = ctx.mainTables?.length ? ctx.mainTables : ctx.mainTable ? [ctx.mainTable] : [];
+    if (!mains.length) {
+        return { ok: true, errorCount: 0, message: null, focusTarget: null };
+    }
+
+    const msg =
+        process === "固熔"
+            ? "固熔：第一行为空或去空格后为「線」时，第二行及以下规定行段该列须全部为空。"
+            : "鍛壓：第一行某列为空时，自第三行起该列须全部为空。";
+
+    const cascadeRowFloor = process === "固熔" ? 2 : 3;
+
+    const invalidCells = new Set();
+    let firstFocus = null;
+
+    for (const table of mains) {
+        const grid = buildGridDomRefs(table);
+        if (!grid.length) continue;
+
+        for (const visualCol of topCols) {
+            const topCell = grid[0]?.[visualCol - 1];
+            if (!topCell || topCell.tagName?.toLowerCase() === "th") continue;
+            const trigger =
+                process === "固熔"
+                    ? shouldCascadeGurongRow1(topCell)
+                    : (topCell.innerText ?? "").trim() === "";
+            if (!trigger) continue;
+
+            for (const spec of specs) {
+                const [startRow, endRow] = specRowRangeEnds(spec);
+                const specCols = expandRuleCols(spec);
+                if (!specCols.includes(visualCol)) continue;
+                const rowStart = Math.max(cascadeRowFloor, startRow);
+                if (rowStart > endRow) continue;
+                for (let vr = rowStart; vr <= endRow; vr++) {
+                    const cell = grid[vr - 1]?.[visualCol - 1];
+                    if (!cell || cell.tagName?.toLowerCase() === "th") continue;
+                    if ((cell.innerText ?? "").trim() === "") continue;
+                    invalidCells.add(cell);
+                    cell.classList.add("md-cell-invalid");
+                    if (!firstFocus) firstFocus = cell;
+                }
+            }
+        }
+    }
+
+    if (invalidCells.size === 0) {
+        return { ok: true, errorCount: 0, message: null, focusTarget: null };
+    }
+    return {
+        ok: false,
+        errorCount: invalidCells.size,
+        message: msg,
+        focusTarget: firstFocus || mains[0],
+    };
+}
+
 function fillEmptyIntCellsWithZero(holder) {
     // 用户诉求：不再做任何“空数字格补 0”
     // （避免把 OCR 的空白值强行变成 0，提交后看板也能保持空值语义）
@@ -700,11 +792,17 @@ export function runBoardValidationBeforeSubmit() {
     const dupResult = validateDuplicateBizKeysAcrossSummaryBlocks();
     const summaryResult = validateSummaryTable(ctx);
     const mainResult = validateMainTable(ctx);
-    const totalErrors = dupResult.errorCount + summaryResult.errorCount + mainResult.errorCount;
-    const firstMessage = dupResult.message || summaryResult.message || mainResult.message;
+    const cascadeResult = validateFirstRowColumnCascade(ctx);
+    const totalErrors =
+        dupResult.errorCount +
+        summaryResult.errorCount +
+        mainResult.errorCount +
+        cascadeResult.errorCount;
+    const firstMessage =
+        dupResult.message || summaryResult.message || mainResult.message || cascadeResult.message;
 
     return {
-        ok: dupResult.ok && summaryResult.ok && mainResult.ok,
+        ok: dupResult.ok && summaryResult.ok && mainResult.ok && cascadeResult.ok,
         errorCount: totalErrors,
         message:
             firstMessage ||
@@ -713,6 +811,7 @@ export function runBoardValidationBeforeSubmit() {
             dupResult.focusTarget ||
             summaryResult.focusTarget ||
             mainResult.focusTarget ||
+            cascadeResult.focusTarget ||
             ctx.summaryTables?.[0] ||
             ctx.summaryTable ||
             ctx.mainTable ||
@@ -922,6 +1021,25 @@ export function collectVerifiedMarkdown() {
         (tables ? tables.innerHTML : "");
     if (state.cnc0SecondBlockLocked) {
         holder.querySelectorAll(".cnc0-second-block").forEach((el) => el.remove());
+    } else {
+        // 展开 CNC0 第二段包裹：若把带 .cnc0-second-block 的 HTML 存库再经 extractSegmentsFromRawString
+        // 切段渲染，div 会被拆成「只有标题、表在外围」的坏结构，反复「通过」时解析条数会在 1/2 间抖动。
+        holder.querySelectorAll(".cnc0-second-block").forEach((block) => {
+            const parent = block.parentNode;
+            if (!parent) return;
+            while (block.firstChild) parent.insertBefore(block.firstChild, block);
+            block.remove();
+        });
+        holder.querySelectorAll(".cnc0-second-title-row").forEach((row) => {
+            const h1 = row.querySelector("h1.ocr-meta-title");
+            if (h1 && row.parentNode) {
+                const inter = document.createElement("div");
+                inter.className = "ocr-inter-html";
+                inter.appendChild(h1);
+                row.parentNode.insertBefore(inter, row);
+            }
+            row.remove();
+        });
     }
     fillEmptyIntCellsWithZero(holder);
     normalizeDuanyaRow1BatchCells(holder);

@@ -177,7 +177,7 @@ def add_native_good_rate_chart_choya(ws, final_data: pd.DataFrame, anchor: str =
     helper_col = 70  # BR 列附近
     ws.cell(row=2, column=helper_col, value="序列")
     ws.cell(row=2, column=helper_col + 1, value="日期")
-    ws.cell(row=3, column=helper_col, value="年/月汇总")
+    ws.cell(row=3, column=helper_col, value="年月周汇总")
     ws.cell(row=4, column=helper_col, value="日良率趋势")
     ws.cell(row=5, column=helper_col, value="目标良率")
 
@@ -345,10 +345,10 @@ def add_native_good_rate_chart_jinjia_cnc0_full(ws, final_data: pd.DataFrame, an
     helper_col = 70
     ws.cell(row=2, column=helper_col, value="序列")
     ws.cell(row=2, column=helper_col + 1, value="日期")
-    ws.cell(row=3, column=helper_col, value="一次年/月汇总")
-    ws.cell(row=4, column=helper_col, value="二次年/月汇总")
-    ws.cell(row=5, column=helper_col, value="一次日趋势")
-    ws.cell(row=6, column=helper_col, value="二次日趋势")
+    ws.cell(row=3, column=helper_col, value="年月周一次良率")
+    ws.cell(row=4, column=helper_col, value="年月周二次良率")
+    ws.cell(row=5, column=helper_col, value="日一次良率")
+    ws.cell(row=6, column=helper_col, value="日二次良率")
     ws.cell(row=7, column=helper_col, value="一次目標良率")
     ws.cell(row=8, column=helper_col, value="二次目標良率")
 
@@ -578,10 +578,10 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     helper_col = 70
     ws.cell(row=2, column=helper_col, value="序列")
     ws.cell(row=2, column=helper_col + 1, value="日期")
-    ws.cell(row=3, column=helper_col, value="一次年/月汇总")
-    ws.cell(row=4, column=helper_col, value="二次年/月汇总")
-    ws.cell(row=5, column=helper_col, value="一次日趋势")
-    ws.cell(row=6, column=helper_col, value="二次日趋势")
+    ws.cell(row=3, column=helper_col, value="年月周一次良率")
+    ws.cell(row=4, column=helper_col, value="年月周二次良率")
+    ws.cell(row=5, column=helper_col, value="日一次良率")
+    ws.cell(row=6, column=helper_col, value="日二次良率")
     ws.cell(row=7, column=helper_col, value="一次目標良率")
     ws.cell(row=8, column=helper_col, value="二次目標良率")
 
@@ -813,13 +813,24 @@ def build_dashboard_export_bytes(
         monthly = data.groupby(data["生產日期"].dt.to_period("M"))[val_cols].sum().reset_index()
         monthly["生產日期"] = monthly["生產日期"].dt.month.astype(str) + "月"  
 
+        # 周小计（周日到周六）
+        weekly = data.copy()
+        weekly["_week_year"] = weekly["生產日期"].dt.year
+        weekly["_week_num"] = weekly["生產日期"].dt.strftime("%U").astype(int).clip(lower=1)
+        weekly = (
+            weekly.groupby(["_week_year", "_week_num"], as_index=False, sort=True)[val_cols]
+            .sum()
+        )
+        weekly["生產日期"] = "WK" + weekly["_week_num"].astype(str)
+        weekly = weekly[["生產日期"] + val_cols]
+
         # 年小计
         yearly = data.groupby(data["生產日期"].dt.year)[val_cols].sum().reset_index()
         yearly["生產日期"] = yearly["生產日期"].astype(str) + "年"
 
         data["生產日期"] = pd.to_datetime(d["生產日期"]) .dt.strftime("%m/%d")
         # 拼接
-        final_data = pd.concat([yearly, monthly,data], ignore_index=True)[["生產日期"] + val_cols]
+        final_data = pd.concat([yearly, monthly, weekly, data], ignore_index=True)[["生產日期"] + val_cols]
         final_data["良品數"] = final_data["總投入數"]-final_data["總不良數"]
         final_data["目標良率"] = "99.80%"
         final_data["總良率"] = (final_data["良品數"] / final_data["總投入數"]).map(lambda x: f"{x:.2%}")
@@ -859,13 +870,24 @@ def build_dashboard_export_bytes(
         monthly = data.groupby(data["生產日期"].dt.to_period("M"))[val_cols].sum().reset_index()
         monthly["生產日期"] = monthly["生產日期"].dt.month.astype(str) + "月"  
 
+        # 周小计（周日到周六）
+        weekly = data.copy()
+        weekly["_week_year"] = weekly["生產日期"].dt.year
+        weekly["_week_num"] = weekly["生產日期"].dt.strftime("%U").astype(int).clip(lower=1)
+        weekly = (
+            weekly.groupby(["_week_year", "_week_num"], as_index=False, sort=True)[val_cols]
+            .sum()
+        )
+        weekly["生產日期"] = "WK" + weekly["_week_num"].astype(str)
+        weekly = weekly[["生產日期"] + val_cols]
+
         # 年小计
         yearly = data.groupby(data["生產日期"].dt.year)[val_cols].sum().reset_index()
         yearly["生產日期"] = yearly["生產日期"].astype(str) + "年"
 
         data["生產日期"] = pd.to_datetime(d["生產日期"]) .dt.strftime("%m/%d")
         # 拼接
-        final_data = pd.concat([yearly, monthly,data], ignore_index=True)[["生產日期"] + val_cols]
+        final_data = pd.concat([yearly, monthly, weekly, data], ignore_index=True)[["生產日期"] + val_cols]
         final_data["良品數"] = final_data["總投入數"]-final_data["總不良數"]
         final_data["目標良率"] = "100.00%"
         final_data["總良率"] = (final_data["良品數"] / final_data["總投入數"]).map(lambda x: f"{x:.2%}")
@@ -905,13 +927,24 @@ def build_dashboard_export_bytes(
         monthly = data.groupby(data["生產日期"].dt.to_period("M"))[val_cols].sum().reset_index()
         monthly["生產日期"] = monthly["生產日期"].dt.month.astype(str) + "月"  
 
+        # 周小计（周日到周六）
+        weekly = data.copy()
+        weekly["_week_year"] = weekly["生產日期"].dt.year
+        weekly["_week_num"] = weekly["生產日期"].dt.strftime("%U").astype(int).clip(lower=1)
+        weekly = (
+            weekly.groupby(["_week_year", "_week_num"], as_index=False, sort=True)[val_cols]
+            .sum()
+        )
+        weekly["生產日期"] = "WK" + weekly["_week_num"].astype(str)
+        weekly = weekly[["生產日期"] + val_cols]
+
         # 年小计
         yearly = data.groupby(data["生產日期"].dt.year)[val_cols].sum().reset_index()
         yearly["生產日期"] = yearly["生產日期"].astype(str) + "年"
 
         data["生產日期"] = pd.to_datetime(d["生產日期"]) .dt.strftime("%m/%d")
         # 拼接
-        final_data = pd.concat([yearly, monthly,data], ignore_index=True)[["生產日期"] + val_cols]
+        final_data = pd.concat([yearly, monthly, weekly, data], ignore_index=True)[["生產日期"] + val_cols]
         final_data["良品數"] = final_data["總投入數"]-final_data["總不良數"]
         final_data["目標良率"] = "100.00%"
         final_data["總良率"] = (final_data["良品數"] / final_data["總投入數"]).map(lambda x: f"{x:.2%}")
@@ -955,16 +988,27 @@ def build_dashboard_export_bytes(
         monthly = data.groupby(data["生產日期"].dt.to_period("M"))[val_cols].sum().reset_index()
         monthly["生產日期"] = monthly["生產日期"].dt.month.astype(str) + "月"  
 
+        # 周小计（周日到周六）
+        weekly = data.copy()
+        weekly["_week_year"] = weekly["生產日期"].dt.year
+        weekly["_week_num"] = weekly["生產日期"].dt.strftime("%U").astype(int).clip(lower=1)
+        weekly = (
+            weekly.groupby(["_week_year", "_week_num"], as_index=False, sort=True)[val_cols]
+            .sum()
+        )
+        weekly["生產日期"] = "WK" + weekly["_week_num"].astype(str)
+        weekly = weekly[["生產日期"] + val_cols]
+
         # 年小计
         yearly = data.groupby(data["生產日期"].dt.year)[val_cols].sum().reset_index()
         yearly["生產日期"] = yearly["生產日期"].astype(str) + "年"
 
         data["生產日期"] = pd.to_datetime(d["生產日期"]) .dt.strftime("%m/%d")
         # 拼接
-        final_data = pd.concat([yearly, monthly,data], ignore_index=True)[["生產日期"] + val_cols]
+        final_data = pd.concat([yearly, monthly, weekly, data], ignore_index=True)[["生產日期"] + val_cols]
         final_data["良品數"] = final_data["總投入數"]-final_data["總不良數"]
-        final_data["一次目標良率"] = "99.90%"
-        final_data["二次目標良率"] = "100.00%"
+        final_data["一次目標良率"] = "99.70%"
+        final_data["二次目標良率"] = "99.90%"
         final_data["一次良率"] = (final_data["良品數"] / final_data["總投入數"]).map(lambda x: f"{x:.2%}")
         final_data["二次良率"] = ((final_data["總投入數"]-final_data["不可重工不良數"]) / final_data["總投入數"]).map(lambda x: f"{x:.2%}")
         final_data = final_data[["生產日期","總投入數","良品數","一次目標良率","二次目標良率",
@@ -1019,16 +1063,27 @@ def build_dashboard_export_bytes(
         monthly = data.groupby(data["生產日期"].dt.to_period("M"))[val_cols].sum().reset_index()
         monthly["生產日期"] = monthly["生產日期"].dt.month.astype(str) + "月"  
 
+        # 周小计（周日到周六）
+        weekly = data.copy()
+        weekly["_week_year"] = weekly["生產日期"].dt.year
+        weekly["_week_num"] = weekly["生產日期"].dt.strftime("%U").astype(int).clip(lower=1)
+        weekly = (
+            weekly.groupby(["_week_year", "_week_num"], as_index=False, sort=True)[val_cols]
+            .sum()
+        )
+        weekly["生產日期"] = "WK" + weekly["_week_num"].astype(str)
+        weekly = weekly[["生產日期"] + val_cols]
+
         # 年小计
         yearly = data.groupby(data["生產日期"].dt.year)[val_cols].sum().reset_index()
         yearly["生產日期"] = yearly["生產日期"].astype(str) + "年"
 
         data["生產日期"] = pd.to_datetime(d["生產日期"]) .dt.strftime("%m/%d")
         # 拼接
-        final_data = pd.concat([yearly, monthly,data], ignore_index=True)[["生產日期"] + val_cols]
+        final_data = pd.concat([yearly, monthly, weekly, data], ignore_index=True)[["生產日期"] + val_cols]
         final_data["良品數"] = final_data["總投入數"]-final_data["總不良數"]
         final_data["一次目標良率"] = "99.70%"
-        final_data["二次目標良率"] = "100.00%"
+        final_data["二次目標良率"] = "99.90%"
         final_data["一次良率"] = (final_data["良品數"] / final_data["總投入數"]).map(lambda x: f"{x:.2%}")
         final_data["二次良率"] = ((final_data["總投入數"]-final_data["不可重工不良數"]) / final_data["總投入數"]).map(lambda x: f"{x:.2%}")
         final_data = final_data[["生產日期","總投入數","抽检数","良品數","一次目標良率","二次目標良率",
