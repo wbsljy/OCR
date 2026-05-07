@@ -186,6 +186,9 @@
                 </div>
             </div>
         </form>
+        <div class="stats-verified-export-row">
+            <button type="button" class="stats-verified-export-btn" id="stats-verified-export-open">导出已验证（Excel）</button>
+        </div>
     </div>
 </section>
 
@@ -256,7 +259,49 @@
     </div>
 </section>
 
+<dialog id="stats-verified-export-dialog" class="stats-export-dialog">
+    <form method="get" action="{{ request.url_for('stats_export_verified_board') }}" class="stats-export-dialog-form">
+        <h3>导出已验证看板记录</h3>
+        <label>制程
+            <select name="process" required>
+                <optgroup label="冲压（沖壓）">
+                    {% for p in chongya_process_options %}
+                    <option value="{{ p }}" {% if loop.first %}selected{% endif %}>{{ p }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="金加">
+                    {% for p in jinjia_process_options %}
+                    <option value="{{ p }}">{{ p }}</option>
+                    {% endfor %}
+                </optgroup>
+            </select>
+        </label>
+        <label>生产日期从
+            <input type="date" name="start_date" value="{{ v_start }}" required>
+        </label>
+        <label>至
+            <input type="date" name="end_date" value="{{ v_end }}" required>
+        </label>
+        <div class="stats-export-dialog-actions">
+            <button type="button" class="btn-secondary" id="stats-verified-export-cancel">取消</button>
+            <button type="submit">导出</button>
+        </div>
+    </form>
+</dialog>
+
 <script>
+(function() {
+    var dlg = document.getElementById("stats-verified-export-dialog");
+    var openBtn = document.getElementById("stats-verified-export-open");
+    var cancelBtn = document.getElementById("stats-verified-export-cancel");
+    if (openBtn && dlg && typeof dlg.showModal === "function") {
+        openBtn.addEventListener("click", function() { dlg.showModal(); });
+    }
+    if (cancelBtn && dlg) {
+        cancelBtn.addEventListener("click", function() { dlg.close(); });
+    }
+})();
+
 document.querySelectorAll('.task-row-clickable[data-href]').forEach(function(row) {
     row.addEventListener('click', function() {
         var href = row.getAttribute('data-href');

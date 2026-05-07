@@ -2,9 +2,10 @@
 
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -19,8 +20,20 @@ from services.dashboard_service import (
     infer_dashboard_key_from_markdown,
     list_board_records_for_stats,
 )
+from services.records_export import build_verified_board_excel_bytes
 
 router = APIRouter()
+
+VERIFIED_EXPORT_PROCESSES: tuple[str, ...] = tuple(
+    p for opts in KEY_PROCESS_OPTIONS.values() for p in opts
+)
+
+
+def _key_name_for_verified_export_process(process: str) -> str | None:
+    for key, opts in KEY_PROCESS_OPTIONS.items():
+        if process in opts:
+            return key
+    return None
 
 
 def _parse_date_param(raw: str | None) -> date | None:
@@ -162,6 +175,67 @@ def page(request: Request, db: Session = Depends(get_db)):
         chongya_process_options=KEY_PROCESS_OPTIONS["沖壓"],
         jinjia_process_options=KEY_PROCESS_OPTIONS["金加"],
         shift_options=SHIFT_OPTIONS,
+    )
+
+
+@router.get("/stats/export-verified-board", name="stats_export_verified_board")
+def export_verified_board(
+    db: Session = Depends(get_db),
+    process: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    if not process or process not in VERIFIED_EXPORT_PROCESSES:
+        return JSONResponse(
+            {
+                "success": False,
+                "message": "请选择有效的制程（鍛壓 / 固熔 / 時效 / CNC0 / CNC0 全檢）。",
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    key_name = _key_name_for_verified_export_process(process)
+    if not key_name:
+        return JSONResponse(
+            {"success": False, "message": "无法识别的制程。"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    start_value = _parse_date_param(start_date)
+    end_value = _parse_date_param(end_date)
+    if not start_value or not end_value:
+        return JSONResponse(
+            {"success": False, "message": "请提供有效的开始日期与结束日期。"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if start_value > end_value:
+        start_value, end_value = end_value, start_value
+
+    records = list_board_records_for_stats(
+        db,
+        key_name=key_name,
+        process_name=process,
+        shift_filter=None,
+        start_date=start_value,
+        end_date=end_value,
+        limit=5000,
+    )
+    if not records:
+        return JSONResponse(
+            {"success": False, "message": "所选条件下暂无已验证记录。"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    ocr_ids = {r["ocr_result_id"] for r in records}
+    ocr_rows = db.scalars(select(OcrResult).where(OcrResult.id.in_(ocr_ids))).all()
+    markdown_by_id = {r.id: r.verified_markdown for r in ocr_rows}
+
+    payload = build_verified_board_excel_bytes(records, markdown_by_id)
+    fname = f"{process}-{start_value.isoformat()}_{end_value.isoformat()}.xlsx"
+    ascii_fallback = f"export_{start_value.isoformat()}_{end_value.isoformat()}.xlsx"
+    cd = f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(fname)}"
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": cd},
     )
 
 

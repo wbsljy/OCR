@@ -1323,34 +1323,6 @@ def _summary_page_to_part(summary: dict[str, str]) -> int:
     return 1
 
 
-def _table_to_grid(table: Tag) -> list[list[str]]:
-    rows = table.find_all("tr")
-    grid: list[list[str | None]] = []
-    for row_idx, row in enumerate(rows):
-        cells = row.find_all(["td", "th"])
-        if len(grid) <= row_idx:
-            grid.append([])
-        col_idx = 0
-        for cell in cells:
-            while col_idx < len(grid[row_idx]) and grid[row_idx][col_idx] is not None:
-                col_idx += 1
-            rowspan = int(cell.get("rowspan", 1))
-            colspan = int(cell.get("colspan", 1))
-            value = _compact_text(cell.get_text(" ", strip=True))
-            for r in range(row_idx, min(row_idx + rowspan, len(rows))):
-                if len(grid) <= r:
-                    grid.append([])
-                for c in range(col_idx, col_idx + colspan):
-                    while len(grid[r]) <= c:
-                        grid[r].append(None)
-                    if grid[r][c] is None:
-                        grid[r][c] = value
-            col_idx += colspan
-    return [[cell or "" for cell in row] for row in grid]
-
-
-
-
 def _find_row_by_col2(grid: list[list[str]], labels: set[str]) -> int | None:
     normalized_labels = {_normalize_label(label) for label in labels}
     for idx, row in enumerate(grid, start=1):
@@ -1497,6 +1469,32 @@ def list_board_records_for_stats(
 
 def _compact_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
+
+
+def _table_to_grid(table: Tag) -> list[list[str]]:
+    rows = table.find_all("tr")
+    grid: list[list[str | None]] = []
+    for row_idx, row in enumerate(rows):
+        cells = row.find_all(["td", "th"])
+        if len(grid) <= row_idx:
+            grid.append([])
+        col_idx = 0
+        for cell in cells:
+            while col_idx < len(grid[row_idx]) and grid[row_idx][col_idx] is not None:
+                col_idx += 1
+            rowspan = int(cell.get("rowspan", 1))
+            colspan = int(cell.get("colspan", 1))
+            value = _compact_text(cell.get_text(" ", strip=True))
+            for r in range(row_idx, min(row_idx + rowspan, len(rows))):
+                if len(grid) <= r:
+                    grid.append([])
+                for c in range(col_idx, col_idx + colspan):
+                    while len(grid[r]) <= c:
+                        grid[r].append(None)
+                    if grid[r][c] is None:
+                        grid[r][c] = value
+            col_idx += colspan
+    return [[cell or "" for cell in row] for row in grid]
 
 
 def _normalize_label(value: str) -> str:
