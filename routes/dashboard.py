@@ -10,8 +10,10 @@ from extensions import get_db, render_template
 from services.dashboard_service import SHIFT_OPTIONS, build_dashboard_context
 from services.export import (
     build_dashboard_export_bytes,
+    build_dashboard_transposed_final_data,
     export_rows_is_empty,
     fetch_dashboard_records_for_export,
+    rate_combo_chart_payload_for_web,
 )
 
 
@@ -21,18 +23,37 @@ router = APIRouter()
 @router.get("/dashboard", name="dashboard_page")
 def page(request: Request, db: Session = Depends(get_db)):
     """渲染无需登录的数据看板。"""
+    qp = request.query_params
     context = build_dashboard_context(
         db,
-        key_name=request.query_params.get("key"),
-        process_name=request.query_params.get("process"),
-        shift_name=request.query_params.get("shift"),
-        start_date=request.query_params.get("start_date"),
-        end_date=request.query_params.get("end_date"),
-        batch=request.query_params.get("batch"),
-        line=request.query_params.get("line"),
-        inspection_location=request.query_params.get("inspection_location"),
-        production_name=request.query_params.get("production_name"),
+        key_name=qp.get("key"),
+        process_name=qp.get("process"),
+        shift_name=qp.get("shift"),
+        start_date=qp.get("start_date"),
+        end_date=qp.get("end_date"),
+        batch=qp.get("batch"),
+        line=qp.get("line"),
+        inspection_location=qp.get("inspection_location"),
+        production_name=qp.get("production_name"),
     )
+    combo_chart = None
+    try:
+        _sk, _sp, _sv, _ev, export_df = fetch_dashboard_records_for_export(
+            db,
+            key_name=qp.get("key"),
+            process_name=qp.get("process"),
+            start_date=qp.get("start_date"),
+            end_date=qp.get("end_date"),
+            production_name=qp.get("production_name"),
+            inspection_location=qp.get("inspection_location"),
+            shift_name=qp.get("shift"),
+        )
+        if not export_df.empty:
+            fd = build_dashboard_transposed_final_data(_sk, _sp, export_df)
+            combo_chart = rate_combo_chart_payload_for_web(fd, _sk, _sp)
+    except ValueError:
+        combo_chart = None
+    context["combo_chart"] = combo_chart
     return render_template(request, "dashboard.html", **context)
 
 

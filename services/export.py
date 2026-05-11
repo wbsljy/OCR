@@ -765,27 +765,12 @@ def add_native_good_rate_chart_jinjia_cnc0(ws, final_data: pd.DataFrame, anchor:
     bar.legend.txPr = _text_props(7.5)
     _finalize_dashboard_rate_chart(final_data, bar, ws)
 
-def build_dashboard_export_bytes(
-    key,
-    process,
+def build_dashboard_transposed_final_data(
+    key: str | None,
+    process: str | None,
     data: pd.DataFrame,
-    production_name: str | None = None,
-    inspection_location: str | None = None,
-    shift: str | None = None,
-) -> bytes:
-    sel_p = production_name if production_name in PRODUCT_NAME_OPTIONS else DEFAULT_PRODUCT_NAME
-    sel_i = (
-        inspection_location
-        if inspection_location in INSPECTION_LOCATION_OPTIONS
-        else "不限"
-    )
-    sel_shift = shift if shift in SHIFT_OPTIONS else "不限"
-    title_parts = [str(key or "-"), str(process or "-"), f"品名 {sel_p}", f"班别 {sel_shift}"]
-    if (process or "") == "CNC0" and sel_i != "不限":
-        title_parts.append(f"抽检 {sel_i}")
-    title = " | ".join(title_parts)
-
-    # 初始化变量
+) -> pd.DataFrame | None:
+    """与 Excel 导出相同的转置数据表（不含写文件）。"""
     final_data = None
 
     if key == "沖壓" and process == "鍛壓" and not data.empty:
@@ -1023,8 +1008,8 @@ def build_dashboard_export_bytes(
         final_data.insert(0, '項目\日期', dates)  # 在位置0插入'日期'列
         final_data.index = range(len(final_data))  # 重置索引为数字
 
-    if key == "金加" and process == "CNC0" and not data.empty:  
-
+    if key == "金加" and process == "CNC0" and not data.empty:
+        data = data.copy()
         # 这里因为数据库没有合并一次、二次特定不良类型的数据，所以先合并！
         for prefix, _ in CNC0_DEFECT_TYPES:
             rw_col = f"{prefix}_badnum_reworkable"
@@ -1097,8 +1082,334 @@ def build_dashboard_export_bytes(
         "總不良數","可重工不良數", "不可重工不良數","一次良率","二次良率"] + defect_list
         final_data.insert(0, '項目\日期', dates)  # 在位置0插入'日期'列
         final_data.index = range(len(final_data))  # 重置索引为数字
+    return final_data
 
-        
+
+def rate_combo_chart_payload_for_web(
+    final_data: pd.DataFrame | None,
+    key: str | None,
+    process: str | None,
+) -> dict[str, Any] | None:
+    """与 Excel 顶部 openpyxl 组合图同源的数据，供前端 Chart.js mixed 渲染。"""
+    if final_data is None or getattr(final_data, "empty", True):
+        return None
+    if key == "沖壓":
+        return _web_combo_payload_choya(final_data)
+    if key == "金加" and process == "CNC0 全檢":
+        return _web_combo_payload_cnc0_full(final_data)
+    if key == "金加" and (process or "") == "CNC0":
+        return _web_combo_payload_cnc0(final_data)
+    return None
+
+
+def _web_combo_payload_choya(final_data: pd.DataFrame) -> dict[str, Any] | None:
+    date_labels = [str(col) for col in final_data.columns.tolist()[1:]]
+    if not date_labels:
+        return None
+    total_rate_values = [_rate_to_float(v) for v in final_data.iloc[4][1:].tolist()]
+    if not total_rate_values:
+        return None
+    split_index = next((i for i, label in enumerate(date_labels) if "/" in label), len(date_labels))
+    if split_index == 0:
+        split_index = len(date_labels)
+    target_values = [0.998] * len(total_rate_values)
+    summary_values = [
+        total_rate_values[i] if i < split_index else None for i in range(len(total_rate_values))
+    ]
+    daily_values = [
+        total_rate_values[i] if i >= split_index else None for i in range(len(total_rate_values))
+    ]
+    min_rate = min(total_rate_values + [0.998])
+    y_min = max(0.90, min_rate - 0.01)
+    return {
+        "kind": "choya",
+        "title": "总良率趋势图",
+        "xAxisTitle": "日期",
+        "yAxisTitle": "总良率",
+        "labels": date_labels,
+        "yMin": y_min,
+        "yMax": 1.0,
+        "datasets": [
+            {
+                "type": "bar",
+                "label": "年月周汇总",
+                "data": summary_values,
+                "backgroundColor": "rgba(142, 199, 247, 0.85)",
+                "borderColor": "#4A90E2",
+                "borderWidth": 1,
+                "order": 2,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "日良率趋势",
+                "data": daily_values,
+                "borderColor": "#F39C12",
+                "backgroundColor": "#F39C12",
+                "fill": False,
+                "tension": 0.25,
+                "pointRadius": 5,
+                "borderWidth": 2.25,
+                "order": 1,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "目标良率",
+                "data": target_values,
+                "borderColor": "#D9534F",
+                "borderDash": [4, 4],
+                "fill": False,
+                "pointRadius": 4,
+                "pointStyle": "triangle",
+                "borderWidth": 1.5,
+                "order": 0,
+                "dataLabelMode": "last",
+            },
+        ],
+    }
+
+
+def _web_combo_payload_cnc0(final_data: pd.DataFrame) -> dict[str, Any] | None:
+    date_labels = [str(col) for col in final_data.columns.tolist()[1:]]
+    if not date_labels:
+        return None
+    first_target_values = [_rate_to_float(v) for v in final_data.iloc[3][1:].tolist()]
+    second_target_values = [_rate_to_float(v) for v in final_data.iloc[4][1:].tolist()]
+    first_rate_values = [_rate_to_float(v) for v in final_data.iloc[8][1:].tolist()]
+    second_rate_values = [_rate_to_float(v) for v in final_data.iloc[9][1:].tolist()]
+    n = len(date_labels)
+    if (
+        not first_rate_values
+        or len(first_rate_values) != n
+        or len(second_rate_values) != n
+        or len(first_target_values) != n
+        or len(second_target_values) != n
+    ):
+        return None
+    split_index = next((i for i, label in enumerate(date_labels) if "/" in label), len(date_labels))
+    if split_index == 0:
+        split_index = len(date_labels)
+    summary_first = [first_rate_values[i] if i < split_index else None for i in range(n)]
+    summary_second = [second_rate_values[i] if i < split_index else None for i in range(n)]
+    daily_first = [first_rate_values[i] if i >= split_index else None for i in range(n)]
+    daily_second = [second_rate_values[i] if i >= split_index else None for i in range(n)]
+    min_rate = min(first_rate_values + second_rate_values + first_target_values + second_target_values)
+    y_min = max(0.90, min_rate - 0.01)
+    return {
+        "kind": "cnc0",
+        "title": "一次/二次良率趋势图",
+        "xAxisTitle": "日期",
+        "yAxisTitle": "良率",
+        "labels": date_labels,
+        "yMin": y_min,
+        "yMax": 1.0,
+        "datasets": [
+            {
+                "type": "bar",
+                "label": "年月周一次良率",
+                "data": summary_first,
+                "backgroundColor": "rgba(142, 199, 247, 0.85)",
+                "borderColor": "#4A90E2",
+                "borderWidth": 1,
+                "order": 4,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "bar",
+                "label": "年月周二次良率",
+                "data": summary_second,
+                "backgroundColor": "rgba(168, 230, 207, 0.85)",
+                "borderColor": "#27AE60",
+                "borderWidth": 1,
+                "order": 3,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "日一次良率",
+                "data": daily_first,
+                "borderColor": "#F39C12",
+                "fill": False,
+                "tension": 0.25,
+                "pointRadius": 5,
+                "borderWidth": 2.25,
+                "order": 2,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "日二次良率",
+                "data": daily_second,
+                "borderColor": "#1ABC9C",
+                "fill": False,
+                "tension": 0.25,
+                "pointRadius": 5,
+                "borderWidth": 2.25,
+                "order": 1,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "一次目標良率",
+                "data": first_target_values,
+                "borderColor": "#D9534F",
+                "borderDash": [4, 4],
+                "fill": False,
+                "pointRadius": 4,
+                "pointStyle": "triangle",
+                "borderWidth": 1.5,
+                "order": 0,
+                "dataLabelMode": "last",
+            },
+            {
+                "type": "line",
+                "label": "二次目標良率",
+                "data": second_target_values,
+                "borderColor": "#8E44AD",
+                "borderDash": [4, 4],
+                "fill": False,
+                "pointRadius": 4,
+                "pointStyle": "triangle",
+                "borderWidth": 1.5,
+                "order": 0,
+                "dataLabelMode": "last",
+            },
+        ],
+    }
+
+
+def _web_combo_payload_cnc0_full(final_data: pd.DataFrame) -> dict[str, Any] | None:
+    date_labels = [str(col) for col in final_data.columns.tolist()[1:]]
+    if not date_labels:
+        return None
+    first_target_values = [_rate_to_float(v) for v in final_data.iloc[2][1:].tolist()]
+    second_target_values = [_rate_to_float(v) for v in final_data.iloc[3][1:].tolist()]
+    first_rate_values = [_rate_to_float(v) for v in final_data.iloc[7][1:].tolist()]
+    second_rate_values = [_rate_to_float(v) for v in final_data.iloc[8][1:].tolist()]
+    n = len(date_labels)
+    if (
+        not first_rate_values
+        or len(first_rate_values) != n
+        or len(second_rate_values) != n
+        or len(first_target_values) != n
+        or len(second_target_values) != n
+    ):
+        return None
+    split_index = next((i for i, label in enumerate(date_labels) if "/" in label), len(date_labels))
+    if split_index == 0:
+        split_index = len(date_labels)
+    summary_first = [first_rate_values[i] if i < split_index else None for i in range(n)]
+    summary_second = [second_rate_values[i] if i < split_index else None for i in range(n)]
+    daily_first = [first_rate_values[i] if i >= split_index else None for i in range(n)]
+    daily_second = [second_rate_values[i] if i >= split_index else None for i in range(n)]
+    min_rate = min(first_rate_values + second_rate_values + first_target_values + second_target_values)
+    y_min = max(0.90, min_rate - 0.01)
+    return {
+        "kind": "cnc0_full",
+        "title": "一次/二次良率趋势图",
+        "xAxisTitle": "日期",
+        "yAxisTitle": "良率",
+        "labels": date_labels,
+        "yMin": y_min,
+        "yMax": 1.0,
+        "datasets": [
+            {
+                "type": "bar",
+                "label": "年月周一次良率",
+                "data": summary_first,
+                "backgroundColor": "rgba(142, 199, 247, 0.85)",
+                "borderColor": "#4A90E2",
+                "borderWidth": 1,
+                "order": 4,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "bar",
+                "label": "年月周二次良率",
+                "data": summary_second,
+                "backgroundColor": "rgba(168, 230, 207, 0.85)",
+                "borderColor": "#27AE60",
+                "borderWidth": 1,
+                "order": 3,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "日一次良率",
+                "data": daily_first,
+                "borderColor": "#F39C12",
+                "fill": False,
+                "tension": 0.25,
+                "pointRadius": 5,
+                "borderWidth": 2.25,
+                "order": 2,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "日二次良率",
+                "data": daily_second,
+                "borderColor": "#1ABC9C",
+                "fill": False,
+                "tension": 0.25,
+                "pointRadius": 5,
+                "borderWidth": 2.25,
+                "order": 1,
+                "dataLabelMode": "each",
+            },
+            {
+                "type": "line",
+                "label": "一次目標良率",
+                "data": first_target_values,
+                "borderColor": "#D9534F",
+                "borderDash": [4, 4],
+                "fill": False,
+                "pointRadius": 4,
+                "pointStyle": "triangle",
+                "borderWidth": 1.5,
+                "order": 0,
+                "dataLabelMode": "last",
+            },
+            {
+                "type": "line",
+                "label": "二次目標良率",
+                "data": second_target_values,
+                "borderColor": "#8E44AD",
+                "borderDash": [4, 4],
+                "fill": False,
+                "pointRadius": 4,
+                "pointStyle": "triangle",
+                "borderWidth": 1.5,
+                "order": 0,
+                "dataLabelMode": "last",
+            },
+        ],
+    }
+
+
+def build_dashboard_export_bytes(
+    key,
+    process,
+    data: pd.DataFrame,
+    production_name: str | None = None,
+    inspection_location: str | None = None,
+    shift: str | None = None,
+) -> bytes:
+    sel_p = production_name if production_name in PRODUCT_NAME_OPTIONS else DEFAULT_PRODUCT_NAME
+    sel_i = (
+        inspection_location
+        if inspection_location in INSPECTION_LOCATION_OPTIONS
+        else "不限"
+    )
+    sel_shift = shift if shift in SHIFT_OPTIONS else "不限"
+    title_parts = [str(key or "-"), str(process or "-"), f"品名 {sel_p}", f"班别 {sel_shift}"]
+    if (process or "") == "CNC0" and sel_i != "不限":
+        title_parts.append(f"抽检 {sel_i}")
+    title = " | ".join(title_parts)
+
+    final_data = build_dashboard_transposed_final_data(key, process, data)
+
     # 往excel填数据
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as w:

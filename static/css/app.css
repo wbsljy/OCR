@@ -787,6 +787,33 @@ body.page--ocr-workspace .page-shell {
     height: 280px;
 }
 
+.dashboard-rate-combo-block {
+    margin-bottom: 22px;
+    padding: 20px 18px 18px;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    background: linear-gradient(180deg, #fafbfc 0%, #ffffff 38%);
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.dashboard-rate-combo-tip {
+    margin: 0 0 12px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #64748b;
+}
+
+.dashboard-rate-combo-wrap {
+    position: relative;
+    height: 368px;
+    max-width: 100%;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    padding: 14px 6px 4px;
+    box-sizing: border-box;
+}
+
 @media (min-width: 961px) {
     /* 略多分给右侧表格列（相对均分） */
     body.page--ocr-workspace .workspace-grid {
